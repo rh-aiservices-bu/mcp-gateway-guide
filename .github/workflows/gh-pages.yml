@@ -32,10 +32,12 @@ jobs:
         uses: actions/checkout@v4
       - name: configure pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: setup node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: install antora
         run: npm install --global @antora/cli@3.1 @antora/site-generator@3.1 @andrew-jones/antora-tabs-extension
       - name: antora generate

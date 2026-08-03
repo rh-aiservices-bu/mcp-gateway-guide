@@ -1,0 +1,135 @@
+= Architecture & Request Flow
+
+This page explains how {mcp-gw} works under the hood - what each component does and how a request travels from an AI agent through the gateway to an MCP server and back.
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
+
+IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+
+== Component Overview
+
+{mcp-gw} is built from three components, each with a distinct responsibility:
+
+[cols="1,2,3", options="header"]
+|===
+| Component | Role | Details
+
+| *MCP Broker*
+| Default backend at `/mcp`
+| Handles `initialize` and `tools/list` requests. Connects to all configured MCP servers, discovers their tools, and returns an aggregated tool list with prefixes. Caches the tool list and brokers SSE notifications between clients and servers.
+
+| *MCP Router*
+| Envoy ext_proc filter
+| Intercepts `tools/call` requests via Envoy external processing. Parses the tool name to determine the target server based on prefix, sets routing headers (`x-mcp-servername`, `x-mcp-toolname`, `:authority`), strips the prefix before forwarding, and manages backend MCP sessions.
+
+| *MCP Gateway Controller*
+| Kubernetes controller
+| Watches `MCPServerRegistration` custom resources, resolves `HTTPRoute` references to backend URLs, generates a ConfigMap with the server configuration consumed by both the broker and router, and triggers reloads when the configuration changes.
+|===
+
+== Request Flow
+
+Here is what happens when an AI agent interacts with the {mcp-gw}, from initialization through tool discovery and tool execution.
+
+++++
+<img src="https://mermaid.ink/svg/Z3JhcGggVEIKICAgIHN1YmdyYXBoIENsaWVudExheWVyWyJNQ1AgQ2xpZW50Il0KICAgICAgICBDW0FJIEFnZW50XQogICAgZW5kCgogICAgc3ViZ3JhcGggR2F0ZXdheUxheWVyWyJHYXRld2F5ICYgUm91dGluZyJdCiAgICAgICAgR1tHYXRld2F5IEFQSSAvIElzdGlvXQogICAgICAgIFJbTUNQIFJvdXRlcjxici8+RW52b3kgZXh0X3Byb2NdCiAgICBlbmQKCiAgICBzdWJncmFwaCBCcm9rZXJMYXllclsiVG9vbCBBZ2dyZWdhdGlvbiJdCiAgICAgICAgQltNQ1AgQnJva2VyXQogICAgZW5kCgogICAgc3ViZ3JhcGggU2VydmVyTGF5ZXJbIk1DUCBTZXJ2ZXJzIl0KICAgICAgICBTMVt0ZXN0LXNlcnZlcjE8YnIvPnByZWZpeDogdGVzdDFfXQogICAgICAgIFMyW3Jpc2stc2VydmVyPGJyLz5wcmVmaXg6IHJpc2tfXQogICAgZW5kCgogICAgQyAtLT58IjEuIGluaXRpYWxpemUifCBHCiAgICBHIC0tPnwiMi4gRGVmYXVsdCBiYWNrZW5kInwgQgogICAgQiAtLT58IjMuIENvbm5lY3QgJiBkaXNjb3ZlciJ8IFMxCiAgICBCIC0tPnwiMy4gQ29ubmVjdCAmIGRpc2NvdmVyInwgUzIKICAgIEIgLS0+fCI0LiBBZ2dyZWdhdGVkIHRvb2xzInwgQwoKICAgIEMgLS0+fCI1LiB0b29scy9jYWxsIHRlc3QxX2dyZWV0InwgRwogICAgRyAtLT58IjYuIGV4dF9wcm9jIGludGVyY2VwdCJ8IFIKICAgIFIgLS0+fCI3LiBTZXQgOmF1dGhvcml0eSwgc3RyaXAgcHJlZml4InwgRwogICAgRyAtLT58IjguIFJvdXRlIHRvIHNlcnZlciJ8IFMxCiAgICBTMSAtLT58IjkuIFJlc3VsdCJ8IEMK" alt="MCP Gateway request flow" style="display:block;margin:0 auto;max-width:100%;" />
+++++
+
+_Diagram source: link:https://docs.kuadrant.io/dev/mcp-gateway/docs/design/overview/[Upstream MCP Gateway Design^]_
+
+=== 1. Initialize Session
+
+The client sends an `initialize` request to the gateway's `/mcp` endpoint. The Gateway routes it to the MCP Broker (default backend). The broker responds with server capabilities and the `mcp-session-id` header that the client must include in all subsequent requests.
+
+[source,json]
+----
+{"jsonrpc": "2.0", "id": 1, "method": "initialize",
+ "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "my-agent", "version": "1.0"}}}
+----
+
+=== 2. Discover Tools
+
+The client sends a `tools/list` request with the session ID. The broker returns the aggregated list of tools from all registered MCP servers, each prefixed with the server's configured `toolPrefix`:
+
+[source]
+----
+test1_greet, test1_headers, test1_time, ...   <-- from test-server1
+risk_calculate_dti, risk_calculate_ltv, ...   <-- from risk-server
+discover_tools, select_tools                  <-- built-in gateway tools
+----
+
+=== 3. Call a Tool
+
+When the client sends a `tools/call` request (e.g., `test1_greet`), the request takes a different path:
+
+1. The request arrives at the Gateway's public `mcp` listener
+2. The Envoy **ext_proc** filter intercepts it and sends it to the MCP Router
+3. The router parses the tool name, identifies `test1_` as the prefix for `test-server1`
+4. The router sets the `:authority` header to the target server's hostname (e.g., `server1.mcp.local`) and strips the prefix from the tool name (`test1_greet` becomes `greet`)
+5. The router also sets `x-mcp-servername` and `x-mcp-toolname` headers (used by authorization policies)
+6. Envoy routes the request to the correct MCP server based on the `:authority` header via the internal `mcps` listener
+7. The MCP server processes the tool call and returns the result
+
+=== 4. Session Management
+
+The router maintains two types of session mappings:
+
+* *Client sessions* - Created by the broker during `initialize`. Maps the client to a gateway session ID.
+* *Backend sessions* - Created lazily by the router on the first `tools/call` to each backend server. Maps `gateway-session-id/server-name` to a `backend-mcp-session-id`.
+
+This means the router only initializes a backend MCP session when the client actually calls a tool from that server, not during the initial `tools/list` discovery.
+
+=== 5. Response
+
+The MCP server returns the tool result as an SSE response (`event: message\ndata: {...}`). The response flows back through the Gateway to the client.
+
+== Sequence Diagram
+
+The full request flow as a sequence diagram, showing every component interaction:
+
+++++
+<img src="https://mermaid.ink/svg/c2VxdWVuY2VEaWFncmFtCiAgICBwYXJ0aWNpcGFudCBDbGllbnQgYXMgTUNQIENsaWVudAogICAgcGFydGljaXBhbnQgR2F0ZXdheSBhcyBHYXRld2F5IChFbnZveSkKICAgIHBhcnRpY2lwYW50IFJvdXRlciBhcyBNQ1AgUm91dGVyIChleHRfcHJvYykKICAgIHBhcnRpY2lwYW50IEJyb2tlciBhcyBNQ1AgQnJva2VyCiAgICBwYXJ0aWNpcGFudCBTZXJ2ZXIgYXMgTUNQIFNlcnZlcgoKICAgIE5vdGUgb3ZlciBCcm9rZXIsU2VydmVyOiBTdGFydHVwOiBDb250cm9sbGVyIGRpc2NvdmVycyBNQ1BTZXJ2ZXJSZWdpc3RyYXRpb25zCgogICAgQ2xpZW50LT4+R2F0ZXdheTogUE9TVCAvbWNwIChpbml0aWFsaXplKQogICAgR2F0ZXdheS0+PkJyb2tlcjogRm9yd2FyZCAoZGVmYXVsdCBiYWNrZW5kKQogICAgQnJva2VyLS0+PkNsaWVudDogc2VydmVySW5mbywgY2FwYWJpbGl0aWVzCgogICAgQ2xpZW50LT4+R2F0ZXdheTogUE9TVCAvbWNwICh0b29scy9saXN0KQogICAgR2F0ZXdheS0+PkJyb2tlcjogRm9yd2FyZAogICAgQnJva2VyLS0+PkNsaWVudDogQWdncmVnYXRlZCB0b29scyAocHJlZml4ZWQpCgogICAgQ2xpZW50LT4+R2F0ZXdheTogUE9TVCAvbWNwICh0b29scy9jYWxsIHRlc3QxX2dyZWV0KQogICAgR2F0ZXdheS0+PlJvdXRlcjogZXh0X3Byb2MgaW50ZXJjZXB0CiAgICBSb3V0ZXItPj5Sb3V0ZXI6IFBhcnNlIHByZWZpeCwgcmVzb2x2ZSBzZXJ2ZXIKICAgIFJvdXRlci0tPj5HYXRld2F5OiBTZXQgaGVhZGVycywgc3RyaXAgcHJlZml4CiAgICBHYXRld2F5LT4+U2VydmVyOiBGb3J3YXJkICh0b29scy9jYWxsIGdyZWV0KQogICAgU2VydmVyLS0+PkNsaWVudDogVG9vbCByZXN1bHQgKFNTRSkK" alt="MCP Gateway sequence diagram" style="display:block;margin:0 auto;max-width:100%;" />
+++++
+
+== Envoy Filter Chain
+
+When authentication and authorization are enabled (Phases 7-8), the Envoy filter chain processes requests in this order:
+
+[cols="1,2,3", options="header"]
+|===
+| Order | Filter | Purpose
+
+| 1
+| ext_proc (MCP Router)
+| Parses MCP protocol, sets routing headers (`INSERT_FIRST`)
+
+| 2
+| WASM (Kuadrant)
+| Evaluates AuthPolicy rules - JWT validation on `mcp` listener, CEL authorization on `mcps` listener (`INSERT_BEFORE ROUTER`)
+
+| 3
+| Router
+| Routes to the target backend based on `:authority` header
+|===
+
+This ordering means the MCP Router sets `x-mcp-toolname` and `x-mcp-servername` headers *before* the Kuadrant WASM filter evaluates authorization policies. This is why tool-level authorization works on the internal `mcps` listener but not on the public `mcp` listener (see xref:08-authorization.adoc[Phase 8]).
+
+== Interactive Flow Visualizer
+
+To see all of the above in action, explore the interactive animated visualizer - it walks through tool discovery, prefix routing, and progressive discovery step by step with clickable components and a request/response inspector.
+
+[NOTE]
+====
+link:https://noyitz.github.io/ai-gateway-docs/mcp-gateway/[*Open the MCP Gateway Flow Visualizer*^] (opens in a new tab)
+
+_3 Flows | Tool Discovery | Prefix Routing | Progressive Discovery_ +
+Built by link:https://github.com/noyitz[Noy Itzikowitz^]
+====
+
+== References
+
+* link:https://docs.kuadrant.io/dev/mcp-gateway/docs/design/overview/[Upstream MCP Gateway Design Overview]
+* link:https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/understanding-mcp-gateway-architecture/[Understanding MCP Gateway Architecture]
+* link:https://noyitz.github.io/ai-gateway-docs/mcp-gateway/[MCP Gateway Flow Visualizer]
+* link:https://modelcontextprotocol.io/specification/2025-06-18/[MCP Specification]

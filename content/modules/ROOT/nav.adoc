@@ -13,3 +13,6 @@
 * xref:07-authentication.adoc[Phase 7: Authentication]
 * xref:08-authorization.adoc[Phase 8: Authorization]
 * xref:09-virtual-servers.adoc[Phase 9: Virtual MCP Servers]
+
+.Reference
+* xref:architecture.adoc[Architecture & Request Flow]

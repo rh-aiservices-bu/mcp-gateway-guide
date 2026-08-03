@@ -208,4 +208,4 @@ manifests/09-virtual-servers/
 
 == Next step
 
-You have completed the full {mcp-gw} setup on {ocp-short}. Return to the xref:index.adoc[Overview] for reference links and documentation.
+Proceed to xref:architecture.adoc[Architecture & Request Flow] to understand how the {mcp-gw} components work together.

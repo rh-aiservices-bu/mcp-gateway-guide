@@ -114,8 +114,13 @@ For end-to-end deployment using a single script, see the xref:quick-start.adoc[A
 | Creates curated tool collections from registered servers
 |===
 
+== Architecture
+
+For a deep dive into how the {mcp-gw} components work together - the MCP Broker, MCP Router (ext_proc), and Gateway Controller - see the xref:architecture.adoc[Architecture & Request Flow] page.
+
 == Documentation
 
 * link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[{rhcl} 1.4 {mcp-gw} Official Docs]
 * link:https://docs.kuadrant.io/dev/mcp-gateway/[Upstream MCP Gateway Documentation]
+* link:https://noyitz.github.io/ai-gateway-docs/mcp-gateway/[MCP Gateway Interactive Flow Visualizer]
 * link:https://modelcontextprotocol.io/specification/2025-06-18/[MCP Specification]
