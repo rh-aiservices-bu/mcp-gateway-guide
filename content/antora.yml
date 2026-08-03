@@ -1,0 +1,15 @@
+name: modules
+title: MCP Gateway on OpenShift Guide
+version: main
+nav:
+  - modules/ROOT/nav.adoc
+
+asciidoc:
+  attributes:
+    experimental: true
+    page-pagination: true
+    source-highlighter: highlightjs
+    rhcl: "Red Hat Connectivity Link"
+    ocp-short: "OpenShift"
+    mcp-gw: "MCP Gateway"
+    repo-url: "https://github.com/rcarrata/mcp-gateway-guide"

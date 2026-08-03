@@ -1,0 +1,272 @@
+= Phase 7: Authentication
+
+Configure OAuth 2.1 authentication for the {mcp-gw} using Kuadrant AuthPolicy and Keycloak.
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
+
+IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+
+== Overview
+
+The {mcp-gw} implements the link:https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[MCP Authorization specification] based on OAuth 2.1. When authentication is enabled:
+
+* The broker acts as an OAuth 2.1 *resource server*
+* Requests without valid tokens get a `401` response with `WWW-Authenticate` header
+* The `WWW-Authenticate` header includes the OAuth protected resource metadata URL
+* Clients discover the authorization server via `/.well-known/oauth-protected-resource`
+
+This phase configures:
+
+1. OAuth protected resource metadata via the `MCPGatewayExtension.spec.oauthProtectedResource` field
+2. Kuadrant and Authorino setup for AuthPolicy enforcement
+3. AuthPolicy for JWT validation on the Gateway's public `mcp` listener
+
+== Prerequisites
+
+* Keycloak deployed and running (xref:06-deploy-keycloak.adoc[Phase 6])
+* {rhcl} 1.4 includes Kuadrant and Authorino operators as dependencies
+
+== Installation
+
+=== Step 1: Get the Keycloak Issuer URL
+
+[source,bash]
+----
+export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
+export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
+export MCP_URL="http://${MCP_HOSTNAME}/mcp"
+
+echo "Keycloak issuer: $KEYCLOAK_ISSUER"
+echo "MCP URL: $MCP_URL"
+----
+
+=== Step 2: Configure OAuth via MCPGatewayExtension
+
+Configure the broker to serve OAuth protected resource metadata using the `oauthProtectedResource` field on the MCPGatewayExtension:
+
+[source,bash]
+----
+oc patch mcpgatewayextension mcp-extension -n mcp-gateway --type=merge -p "{
+  \"spec\": {
+    \"oauthProtectedResource\": {
+      \"resourceName\": \"MCP Gateway\",
+      \"resource\": \"${MCP_URL}\",
+      \"authorizationServers\": [\"${KEYCLOAK_ISSUER}\"],
+      \"bearerMethodsSupported\": [\"header\"],
+      \"scopesSupported\": [\"openid\", \"groups\", \"roles\"]
+    }
+  }
+}"
+----
+
+Wait for the broker to pick up the changes:
+
+[source,bash]
+----
+sleep 10
+oc rollout status deployment/mcp-gateway -n mcp-gateway --timeout=60s
+----
+
+IMPORTANT: Do not use `oc set env` to configure OAuth environment variables directly on the broker deployment. The MCP Gateway operator reconciles the deployment and will overwrite any manually set environment variables. Always use the `MCPGatewayExtension.spec.oauthProtectedResource` field.
+
+A template version of the full MCPGatewayExtension manifest with OAuth is available at `manifests/07-authentication/mcpgatewayextension-oauth-patch.yaml.tmpl`.
+
+=== Step 3: Set Up Kuadrant for AuthPolicy Enforcement
+
+Before AuthPolicy resources can be enforced, Kuadrant needs to be properly configured.
+
+==== Ensure OperatorGroup Supports AllNamespaces Mode
+
+The Authorino operator (installed as a dependency of the MCP Gateway operator) requires the OperatorGroup to be in AllNamespaces mode. If the OperatorGroup has `spec.targetNamespaces` set, the Authorino CSV will fail with `UnsupportedOperatorGroup`.
+
+Check the current OperatorGroup:
+
+[source,bash]
+----
+oc get operatorgroup -n mcp-gateway -o yaml
+----
+
+If `spec.targetNamespaces` is set (OwnNamespace mode), delete and recreate it without targetNamespaces:
+
+[source,bash]
+----
+oc delete operatorgroup <name> -n mcp-gateway
+cat <<EOF | oc apply -f -
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: mcp-gateway-og
+  namespace: mcp-gateway
+spec: {}
+EOF
+----
+
+==== Create the Kuadrant CR
+
+A Kuadrant CR must exist in the namespace for AuthPolicy enforcement to work:
+
+[source,bash]
+----
+oc apply -f manifests/07-authentication/kuadrant.yaml
+----
+
+Wait for Kuadrant to be ready:
+
+[source,bash]
+----
+oc wait kuadrant/kuadrant -n mcp-gateway --for=condition=Ready --timeout=120s
+----
+
+==== Restart the Istio Gateway
+
+After Kuadrant installs its WASM plugin (`kuadrant-wasm-shim`), the Istio gateway deployment needs a restart. The WASM plugin is fetched from the `kuadrant-operator-wasm` service, which may not be available when the gateway first starts. If the plugin fails to load, the gateway will block all traffic (fail closed).
+
+[source,bash]
+----
+ISTIO_DEPLOY=$(oc get deployment -n mcp-gateway \
+  -l istio.io/gateway-name=mcp-gateway \
+  -o jsonpath='{.items[0].metadata.name}')
+oc rollout restart deployment/${ISTIO_DEPLOY} -n mcp-gateway
+oc rollout status deployment/${ISTIO_DEPLOY} -n mcp-gateway --timeout=60s
+----
+
+=== Step 4: Create the AuthPolicy
+
+Generate the AuthPolicy with your Keycloak issuer URL and apply it:
+
+[source,bash]
+----
+envsubst < manifests/07-authentication/authpolicy-auth.yaml.tmpl | oc apply -f -
+----
+
+This AuthPolicy:
+
+* Targets the Gateway's *public* `mcp` listener via `sectionName`
+* Validates JWT tokens against the Keycloak issuer
+* Excludes `/.well-known` endpoints from authentication
+* Returns `401` with `WWW-Authenticate` header pointing to OAuth discovery
+
+Wait for the AuthPolicy to be enforced:
+
+[source,bash]
+----
+oc wait authpolicy/mcp-auth-policy -n mcp-gateway \
+  --for=condition=Enforced --timeout=60s
+----
+
+== Verification
+
+=== Check OAuth Discovery Endpoint
+
+[source,bash]
+----
+curl -s "http://${MCP_HOSTNAME}/.well-known/oauth-protected-resource" | jq '.'
+----
+
+Expected response:
+
+[source,json]
+----
+{
+  "resource_name": "MCP Gateway",
+  "resource": "http://mcp.<domain>/mcp",
+  "authorization_servers": [
+    "https://sso.<domain>/realms/mcp"
+  ],
+  "bearer_methods_supported": ["header"],
+  "scopes_supported": ["openid", "groups", "roles"]
+}
+----
+
+=== Verify 401 for Unauthenticated Requests
+
+[source,bash]
+----
+curl -sv "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>&1 | grep -E "(HTTP/|WWW-Authenticate)"
+----
+
+You should see a `401` response with the `WWW-Authenticate` header.
+
+=== Test with a Valid Token
+
+Get a token and make an authenticated request:
+
+[source,bash]
+----
+TOKEN=$(curl -sk -X POST "${KEYCLOAK_ISSUER}/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=mcp-gateway" \
+  -d "username=mcp" \
+  -d "password=mcp" \
+  -d "scope=openid groups roles" | jq -r '.access_token')
+
+curl -s -D /tmp/mcp_headers -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-06-18",
+      "capabilities": {},
+      "clientInfo": {"name": "test-client", "version": "1.0.0"}
+    }
+  }'
+----
+
+You should get a successful MCP initialize response.
+
+== Using MCP Inspector with OAuth
+
+Start the MCP Inspector and it will automatically handle the OAuth flow:
+
+[source,bash]
+----
+npx @modelcontextprotocol/inspector@latest
+----
+
+Connect to `http://\{MCP_HOSTNAME}/mcp` using Streamable HTTP transport. The Inspector will:
+
+1. Detect the `401` and `WWW-Authenticate` header
+2. Fetch the protected resource metadata
+3. Redirect to Keycloak for authentication
+4. Exchange the code for tokens
+5. Use the token for subsequent requests
+
+Login with `mcp` / `mcp` when redirected to Keycloak.
+
+== Appendix
+
+=== Directory Structure
+
+[source]
+----
+manifests/07-authentication/
+  authpolicy-auth.yaml.tmpl                     <-- Auth-only AuthPolicy
+  mcpgatewayextension-oauth-patch.yaml.tmpl     <-- MCPGatewayExtension with OAuth
+  kuadrant.yaml                                  <-- Kuadrant CR
+----
+
+=== Understanding the Two-Listener Architecture
+
+The Gateway has two listeners:
+
+* `mcp` (public) - Receives external client requests. This is where *authentication* happens.
+* `mcps` (internal, `*.mcp.local`) - Used by the broker to forward requests to backend MCP servers. This is where *authorization* happens (see xref:08-authorization.adoc[Phase 8]).
+
+Authentication is applied on the public `mcp` listener because that is the entry point for all client requests. The `/.well-known` paths are excluded since they must be accessible without tokens for OAuth discovery.
+
+== References
+
+* link:https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/authentication/[Upstream: Authentication Configuration]
+* link:https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[MCP Authorization Specification]
+* link:https://docs.kuadrant.io/dev/kuadrant-operator/doc/user-guides/auth/[Kuadrant AuthPolicy Guide]
+
+== Next step
+
+Proceed to xref:08-authorization.adoc[Phase 8: Authorization].

@@ -1,0 +1,15 @@
+* xref:index.adoc[Overview]
+* xref:quick-start.adoc[Automated Setup]
+
+.Installation & Configuration
+* xref:01-prerequisites.adoc[Phase 1: Prerequisites]
+* xref:02-gateway-setup.adoc[Phase 2: Gateway Setup]
+* xref:03-mcp-gateway-extension.adoc[Phase 3: MCP Gateway Extension]
+* xref:04-register-mcp-servers.adoc[Phase 4: Register MCP Servers]
+* xref:05-verification.adoc[Phase 5: Verification]
+
+.Authentication & Authorization
+* xref:06-deploy-keycloak.adoc[Phase 6: Deploy Keycloak]
+* xref:07-authentication.adoc[Phase 7: Authentication]
+* xref:08-authorization.adoc[Phase 8: Authorization]
+* xref:09-virtual-servers.adoc[Phase 9: Virtual MCP Servers]

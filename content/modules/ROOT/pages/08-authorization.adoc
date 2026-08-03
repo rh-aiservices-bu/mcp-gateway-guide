@@ -1,0 +1,239 @@
+= Phase 8: Authorization
+
+Configure tool-level authorization for the {mcp-gw} using CEL expressions and JWT `resource_access` claims.
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
+
+IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+
+== Overview
+
+After configuring authentication (Phase 7), you can add fine-grained tool-level authorization. The {mcp-gw} broker injects `x-mcp-toolname` and `x-mcp-servername` headers when forwarding requests to backend MCP servers via the internal `mcps` listener. An AuthPolicy on that listener evaluates CEL expressions against JWT claims to enforce access control.
+
+=== Two-AuthPolicy Architecture
+
+Authorization requires two AuthPolicy resources targeting different Gateway listeners:
+
+[cols="1,1,2", options="header"]
+|===
+| AuthPolicy | Listener | Purpose
+
+| `mcp-auth-policy` (Phase 7)
+| `mcp` (public)
+| JWT validation for all incoming requests
+
+| `mcp-authz-policy` (this phase)
+| `mcps` (internal)
+| Tool-level authorization based on roles
+|===
+
+This separation is necessary because of how the request flows through the system:
+
+1. Client sends a request to the public `mcp` listener
+2. `mcp-auth-policy` validates the JWT on the `mcp` listener
+3. The broker processes the request and identifies the target tool
+4. The broker forwards the request to the internal `mcps` listener with `x-mcp-toolname` and `x-mcp-servername` headers
+5. `mcp-authz-policy` checks the tool headers against the user's roles on the `mcps` listener
+
+IMPORTANT: Do NOT delete the `mcp-auth-policy` from Phase 7. Both policies must coexist. The auth policy handles JWT validation on the public listener, while the authz policy handles tool access on the internal listener.
+
+=== How It Works
+
+1. User authenticates and receives a JWT with `resource_access` claims
+2. The JWT contains tool roles per MCP server using a `tool:` prefix
+3. When a `tools/call` request arrives, the broker forwards it to the internal listener with `x-mcp-toolname` and `x-mcp-servername` headers
+4. The authorization AuthPolicy on the `mcps` listener evaluates: "does the user have a `tool:<toolname>` role for this server?"
+
+=== resource_access Claim Structure
+
+[source,json]
+----
+{
+  "resource_access": {
+    "mcp-test/test-server1": {
+      "roles": ["tool:greet", "tool:headers", "tool:add_tool", "tool:slow", "tool:time"]
+    },
+    "mcp-test/risk-server": {
+      "roles": ["tool:calculate_dti", "tool:calculate_ltv", "tool:evaluate_credit_risk", "..."]
+    }
+  }
+}
+----
+
+Roles use the `tool:` prefix format. The CEL expression prepends `tool:` to the tool name from the `x-mcp-toolname` header before matching.
+
+The `mcp` user has access to all tools on both servers. The `restricted` user only has `tool:greet` on the test server.
+
+=== When Authorization is Skipped
+
+The authorization `when` condition checks for the presence of the `x-mcp-toolname` header. Requests that don't invoke a specific tool (like `initialize`, `tools/list`) will not have this header and will pass through without authorization checks.
+
+== Installation
+
+=== Step 1: Apply the Authorization Policy
+
+[source,bash]
+----
+export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
+
+envsubst < manifests/08-authorization/authpolicy-authz.yaml.tmpl | oc apply -f -
+----
+
+Wait for the AuthPolicy to be enforced:
+
+[source,bash]
+----
+oc wait authpolicy/mcp-authz-policy -n mcp-gateway \
+  --for=condition=Enforced --timeout=60s
+----
+
+=== Step 2: Verify Both Policies Exist
+
+[source,bash]
+----
+oc get authpolicy -n mcp-gateway
+----
+
+You should see both `mcp-auth-policy` and `mcp-authz-policy` with Enforced status.
+
+=== Key CEL Expression
+
+The authorization rule uses this CEL predicate:
+
+[source]
+----
+('tool:' + request.headers['x-mcp-toolname']) in (
+  has(auth.identity.resource_access) &&
+  auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername'])
+    ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles
+    : []
+)
+----
+
+This checks:
+
+1. Prepend `tool:` to the tool name from the `x-mcp-toolname` header
+2. Does `resource_access` exist in the JWT?
+3. Does it contain an entry for the requested server (`x-mcp-servername`)?
+4. Does the user have a role matching `tool:<toolname>` for that server?
+
+== Verification
+
+=== Test with Full-Access User
+
+Get a token for the `mcp` user and call a risk tool:
+
+[source,bash]
+----
+export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
+
+TOKEN=$(curl -sk -X POST "${KEYCLOAK_ISSUER}/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=mcp-gateway&username=mcp&password=mcp&scope=openid groups roles" | jq -r '.access_token')
+
+# Initialize session
+curl -s -D /tmp/mcp_headers -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
+
+SESSION_ID=$(grep -i "mcp-session-id:" /tmp/mcp_headers | cut -d' ' -f2 | tr -d '\r')
+
+# Call risk_calculate_dti - should succeed
+curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "mcp-session-id: ${SESSION_ID}" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"risk_calculate_dti","arguments":{"monthly_income":8000,"monthly_debts":2400}}}' | jq '.'
+----
+
+=== Test with Restricted User
+
+Get a token for the `restricted` user and try the same tool:
+
+[source,bash]
+----
+RESTRICTED_TOKEN=$(curl -sk -X POST "${KEYCLOAK_ISSUER}/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=mcp-gateway&username=restricted&password=restricted&scope=openid groups roles" | jq -r '.access_token')
+
+# Initialize session with restricted token
+curl -s -D /tmp/mcp_headers_r -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
+
+RESTRICTED_SESSION=$(grep -i "mcp-session-id:" /tmp/mcp_headers_r | cut -d' ' -f2 | tr -d '\r')
+
+# Try to call risk_calculate_dti - should be denied (403)
+curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
+  -H "mcp-session-id: ${RESTRICTED_SESSION}" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"risk_calculate_dti","arguments":{"monthly_income":8000,"monthly_debts":2400}}}' | jq '.'
+----
+
+The restricted user should receive a `403 Forbidden` response because they do not have `tool:calculate_dti` role on the risk server.
+
+=== Test Allowed Tool for Restricted User
+
+[source,bash]
+----
+# Call test1_greet - should succeed for restricted user
+curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
+  -H "mcp-session-id: ${RESTRICTED_SESSION}" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"test1_greet","arguments":{}}}' | jq '.'
+----
+
+This should succeed because the restricted user has `tool:greet` role on `mcp-test/test-server1`.
+
+== Monitoring
+
+=== Check AuthPolicy Status
+
+[source,bash]
+----
+oc get authpolicy -n mcp-gateway
+----
+
+=== Check Authorino Logs
+
+[source,bash]
+----
+oc logs -n mcp-gateway deployment/authorino --tail=20
+----
+
+Look for `authorized: false` and `PERMISSION_DENIED` entries to confirm authorization is blocking unauthorized tool calls.
+
+== Appendix
+
+=== Directory Structure
+
+[source]
+----
+manifests/08-authorization/
+  authpolicy-authz.yaml.tmpl
+----
+
+=== Envoy Filter Chain Order
+
+Understanding the filter chain helps debug auth issues:
+
+1. `ext_proc` (INSERT_FIRST) - The MCP Gateway broker
+2. WASM/Kuadrant plugin (INSERT_BEFORE router) - Authorino integration
+3. Router - Final routing to backends
+
+On the public `mcp` listener, the WASM plugin enforces `mcp-auth-policy` (JWT validation). On the internal `mcps` listener, it enforces `mcp-authz-policy` (tool-level authorization). The broker sits between them, setting the `x-mcp-toolname` and `x-mcp-servername` headers after processing the MCP request.
+
+== References
+
+* link:https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/authorization/[Upstream: Authorization Configuration]
+* link:https://www.envoyproxy.io/docs/envoy/latest/xds/type/v3/cel.proto[CEL Expression Reference]
+* link:https://docs.kuadrant.io/dev/kuadrant-operator/doc/user-guides/auth/[Kuadrant AuthPolicy Guide]
+
+== Next step
+
+Proceed to xref:09-virtual-servers.adoc[Phase 9: Virtual MCP Servers].

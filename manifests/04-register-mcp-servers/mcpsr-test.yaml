@@ -1,0 +1,12 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server1
+  namespace: mcp-test
+spec:
+  prefix: "test1_"
+  targetRef:
+    group: "gateway.networking.k8s.io"
+    kind: "HTTPRoute"
+    name: "test-server1-route"
+    namespace: "mcp-test"

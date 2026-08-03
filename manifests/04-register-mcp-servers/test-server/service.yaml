@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-server1
+  namespace: mcp-test
+  labels:
+    app: test-server1
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: test-server1

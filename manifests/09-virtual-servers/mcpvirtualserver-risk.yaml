@@ -1,0 +1,14 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPVirtualServer
+metadata:
+  name: risk-analysis
+  namespace: mcp-gateway
+spec:
+  description: "Mortgage risk assessment tools for financial analysis"
+  tools:
+    - risk_calculate_dti
+    - risk_calculate_ltv
+    - risk_evaluate_credit_risk
+    - risk_assess_income_stability
+    - risk_assess_asset_sufficiency
+    - risk_generate_risk_recommendation

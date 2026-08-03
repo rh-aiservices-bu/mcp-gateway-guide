@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-server1
+  namespace: mcp-test
+  labels:
+    app: test-server1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-server1
+  template:
+    metadata:
+      labels:
+        app: test-server1
+    spec:
+      containers:
+        - name: test-server1
+          image: ghcr.io/kuadrant/mcp-gateway/test-server1:latest
+          command: ["/mcp-test-server"]
+          args: ["--http", "0.0.0.0:8080"]
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"

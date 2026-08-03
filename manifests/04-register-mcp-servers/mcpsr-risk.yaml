@@ -1,0 +1,12 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: risk-server
+  namespace: mcp-test
+spec:
+  prefix: "risk_"
+  targetRef:
+    group: "gateway.networking.k8s.io"
+    kind: "HTTPRoute"
+    name: "risk-server-route"
+    namespace: "mcp-test"

@@ -1,0 +1,211 @@
+= Phase 9: Virtual MCP Servers
+
+Create curated tool collections using MCPVirtualServer custom resources.
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
+
+IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+
+== Overview
+
+Virtual MCP servers solve a common problem: while aggregating all tools behind a single gateway is great for governance, it can overwhelm LLMs with too many tools to choose from.
+
+`MCPVirtualServer` resources let you create focused, curated collections of tools from your registered MCP servers. Clients access them via the `X-Mcp-Virtualserver` HTTP header.
+
+Benefits:
+
+* *Focused tool sets* - Present only relevant tools per use case
+* *Improved AI performance* - Fewer tools means better tool selection by LLMs
+* *Domain-specific interfaces* - Group tools by business function
+* *Layered access control* - Combines with authorization for fine-grained control
+
+== Prerequisites
+
+The MCPVirtualServer controller stores its configuration in a secret in the `mcp-system` namespace. This namespace must exist before creating virtual servers.
+
+[source,bash]
+----
+oc create ns mcp-system --dry-run=client -o yaml | oc apply -f -
+----
+
+NOTE: This is required even if the MCP Gateway operator is installed in a different namespace (e.g., `mcp-gateway`). The controller hardcodes `mcp-system` as the target namespace for virtual server configuration secrets.
+
+== Installation
+
+=== Step 1: Create Virtual Server Definitions
+
+[source,bash]
+----
+oc apply -k manifests/09-virtual-servers/
+----
+
+This creates the `mcp-system` namespace and both MCPVirtualServer resources.
+
+=== Step 2: Wait for Reconciliation
+
+The controller needs to reconcile the virtual server definitions and write the configuration:
+
+[source,bash]
+----
+sleep 10
+----
+
+Check the controller logs for successful reconciliation:
+
+[source,bash]
+----
+oc logs deployment/mcp-gateway-controller -n mcp-gateway --tail=10 | grep -i "virtual"
+----
+
+You should see `reconciling mcpvirtualserver` messages without errors.
+
+=== Step 3: Restart the Broker
+
+The broker needs a restart to load the virtual server configuration:
+
+[source,bash]
+----
+oc rollout restart deployment/mcp-gateway -n mcp-gateway
+oc rollout status deployment/mcp-gateway -n mcp-gateway --timeout=60s
+----
+
+== Verification
+
+=== Check Virtual Server Status
+
+[source,bash]
+----
+oc get mcpvirtualserver -n mcp-gateway
+----
+
+=== Verify Configuration Secret
+
+Check that the virtual server configuration was written to `mcp-system`:
+
+[source,bash]
+----
+oc get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d
+----
+
+You should see a `virtualServers` section listing both virtual servers and their tools.
+
+=== Test Risk Analysis Virtual Server
+
+Initialize a session and list tools with the virtual server header:
+
+[source,bash]
+----
+export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
+
+# Get token if auth is enabled
+export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+TOKEN=$(curl -sk -X POST "${KEYCLOAK_URL}/realms/mcp/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=mcp-gateway&username=mcp&password=mcp&scope=openid groups roles" | jq -r '.access_token')
+
+# Initialize session
+curl -s -D /tmp/mcp_headers -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
+
+SESSION_ID=$(grep -i "mcp-session-id:" /tmp/mcp_headers | cut -d' ' -f2 | tr -d '\r')
+
+# List tools filtered by the risk-analysis virtual server
+curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "mcp-session-id: ${SESSION_ID}" \
+  -H "X-Mcp-Virtualserver: mcp-gateway/risk-analysis" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq '.result.tools[].name'
+----
+
+Expected output - only risk assessment tools:
+
+[source]
+----
+"risk_calculate_dti"
+"risk_calculate_ltv"
+"risk_evaluate_credit_risk"
+"risk_assess_income_stability"
+"risk_assess_asset_sufficiency"
+"risk_generate_risk_recommendation"
+----
+
+=== Test Basic Tools Virtual Server
+
+[source,bash]
+----
+curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "mcp-session-id: ${SESSION_ID}" \
+  -H "X-Mcp-Virtualserver: mcp-gateway/basic-tools" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/list"}' | jq '.result.tools[].name'
+----
+
+Expected output - only basic test tools:
+
+[source]
+----
+"test1_greet"
+"test1_headers"
+----
+
+=== Test Without Virtual Server Header
+
+Without the header, all tools from all registered servers are returned:
+
+[source,bash]
+----
+curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "mcp-session-id: ${SESSION_ID}" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/list"}' | jq '.result.tools[].name'
+----
+
+== Authorization Interaction
+
+Virtual servers filter which tools a client discovers via `tools/list`, but they do not bypass authorization. When both authorization and virtual servers are active, the gateway applies two filters sequentially:
+
+1. *Identity-based filtering* - AuthPolicy reduces the tool list to tools the user has `resource_access` roles for
+2. *Virtual server filtering* - `X-Mcp-Virtualserver` header further reduces the list to tools defined in the MCPVirtualServer
+
+The result is the *intersection* of both filters. For example, if the `risk-analysis` virtual server lists all risk tools but the `restricted` user only has `tool:greet` access, they will see no tools from the risk-analysis virtual server.
+
+== Troubleshooting
+
+=== "virtual server not found" Error
+
+If the broker logs show `failed to get virtual server ... not found`:
+
+1. Check that the `mcp-system` namespace exists
+2. Check the controller logs for reconciliation errors: `oc logs deployment/mcp-gateway-controller -n mcp-gateway | grep virtual`
+3. Verify the config secret exists: `oc get secret mcp-gateway-config -n mcp-system`
+4. Restart the broker after the config is written
+
+=== Virtual Server Header Format
+
+The `X-Mcp-Virtualserver` header value must use the format `<namespace>/<name>`, e.g., `mcp-gateway/risk-analysis`. Using just the name (e.g., `risk-analysis`) will not work.
+
+== Appendix
+
+=== Directory Structure
+
+[source]
+----
+manifests/09-virtual-servers/
+  kustomization.yaml
+  namespace.yaml                    <-- mcp-system namespace
+  mcpvirtualserver-risk.yaml
+  mcpvirtualserver-basic.yaml
+----
+
+== References
+
+* link:https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/virtual-mcp-servers/[Upstream: Virtual MCP Servers]
+
+== Next step
+
+You have completed the full {mcp-gw} setup on {ocp-short}. Return to the xref:index.adoc[Overview] for reference links and documentation.

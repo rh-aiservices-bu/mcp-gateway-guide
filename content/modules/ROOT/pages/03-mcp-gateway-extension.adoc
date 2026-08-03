@@ -1,0 +1,97 @@
+= Phase 3: MCP Gateway Extension
+
+Create the MCPGatewayExtension to connect the {mcp-gw} to your Gateway listener.
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
+
+IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+
+== Overview
+
+The `MCPGatewayExtension` custom resource tells the MCP Gateway controller which Gateway listener to manage. Without it, `MCPServerRegistration` resources will remain in `NotReady` status because the controller does not know which Gateway to configure.
+
+Key configuration:
+
+* `targetRef` - Points to the Gateway resource and specific listener (via `sectionName`)
+* `httpRouteManagement: Enabled` - The controller automatically creates and manages HTTPRoutes for the MCP broker
+* `sectionName` - Must match the listener name on the Gateway (in our case, `mcp`)
+
+== Installation
+
+=== Step 1: Create the MCPGatewayExtension
+
+[source,bash]
+----
+oc apply -f manifests/03-mcp-gateway-extension/mcpgatewayextension.yaml
+----
+
+=== Step 2: Create the ReferenceGrant
+
+Since the MCPGatewayExtension is in the `mcp-gateway` namespace (same as the Gateway), a ReferenceGrant is not strictly required. However, if you move the extension to a different namespace, you need a ReferenceGrant in the Gateway's namespace:
+
+[source,bash]
+----
+oc apply -f manifests/03-mcp-gateway-extension/referencegrant.yaml
+----
+
+=== Step 3: Apply All Resources
+
+Or apply everything at once with Kustomize:
+
+[source,bash]
+----
+oc apply -k manifests/03-mcp-gateway-extension/
+----
+
+== Verification
+
+=== Wait for MCPGatewayExtension to be Ready
+
+[source,bash]
+----
+oc wait mcpgatewayextension/mcp-extension -n mcp-gateway \
+  --for=condition=Ready --timeout=60s
+----
+
+=== Check that the HTTPRoute was Created
+
+With `httpRouteManagement: Enabled`, the controller creates an HTTPRoute for the MCP broker:
+
+[source,bash]
+----
+oc get httproutes -n mcp-gateway
+----
+
+=== Check Controller Logs
+
+[source,bash]
+----
+oc logs -n mcp-gateway deployment/mcp-gateway-controller --tail=20
+----
+
+== Custom HTTPRoute
+
+If you need custom HTTP headers (such as CORS headers), you can disable automatic HTTPRoute management and create your own. Set `httpRouteManagement: Disabled` in the MCPGatewayExtension and create a custom HTTPRoute with `ResponseHeaderModifier` filters.
+
+See the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#creating-a-custom-httproute-for-the-mcp-gateway_mcp-gateway-install[Custom HTTPRoute documentation] for details.
+
+== Appendix
+
+=== Directory Structure
+
+[source]
+----
+manifests/03-mcp-gateway-extension/
+  kustomization.yaml
+  mcpgatewayextension.yaml
+  referencegrant.yaml
+----
+
+== References
+
+* link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#configuring-the-mcp-gateway-extension_mcp-gateway-install[Configuring the MCP Gateway Extension]
+* link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#creating-a-referencegrant_mcp-gateway-install[Creating a ReferenceGrant]
+
+== Next step
+
+Proceed to xref:04-register-mcp-servers.adoc[Phase 4: Register MCP Servers].

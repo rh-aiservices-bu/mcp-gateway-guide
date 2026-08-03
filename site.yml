@@ -1,0 +1,23 @@
+---
+site:
+  title: MCP Gateway on OpenShift Guide
+  url: https://github.com/rcarrata/mcp-gateway-guide
+  start_page: modules::index.adoc
+
+content:
+  sources:
+    - url: .
+      start_path: content
+
+ui:
+  bundle:
+    url: https://github.com/rhpds/rhdp_showroom_theme/releases/download/latest/ui-bundle.zip
+    snapshot: true
+  supplemental_files: ./supplemental-ui
+
+antora:
+  extensions:
+    - require: '@andrew-jones/antora-tabs-extension'
+
+output:
+  dir: ./www

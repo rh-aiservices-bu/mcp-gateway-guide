@@ -1,0 +1,18 @@
+# Antora build artifacts
+www/
+.cache/antora/
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Serena
+.serena/
+
+# Claude Code
+.claude/

@@ -1,0 +1,168 @@
+= Phase 4: Register MCP Servers
+
+Deploy and register two MCP servers with the {mcp-gw}.
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
+
+IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+
+== Overview
+
+To connect an MCP server to {mcp-gw}, you need two things for each server:
+
+1. An `HTTPRoute` that routes traffic from the Gateway to your MCP server
+2. An `MCPServerRegistration` that tells the gateway about the server and assigns a tool prefix
+
+This guide deploys two MCP servers to demonstrate different use cases:
+
+[cols="1,2,1,1", options="header"]
+|===
+| Server | Description | Prefix | Tools
+
+| Test Server
+| Basic test tools (greeting, headers echo, time, math)
+| `test1_`
+| 5
+
+| Risk Server
+| Mortgage risk assessment calculations
+| `risk_`
+| 6
+|===
+
+== Installation
+
+=== Step 1: Create the MCP Test Namespace
+
+[source,bash]
+----
+oc apply -f manifests/04-register-mcp-servers/namespace.yaml
+----
+
+=== Step 2: Deploy the MCP Servers
+
+Deploy both MCP servers:
+
+[source,bash]
+----
+oc apply -k manifests/04-register-mcp-servers/test-server/
+oc apply -k manifests/04-register-mcp-servers/risk-server/
+----
+
+Wait for all pods to be ready:
+
+[source,bash]
+----
+oc wait pod -n mcp-test -l app=test-server1 --for=condition=Ready --timeout=120s
+oc wait pod -n mcp-test -l app=mcp-risk-server --for=condition=Ready --timeout=120s
+----
+
+=== Step 3: Create HTTPRoutes
+
+Create an HTTPRoute for each server that routes traffic from the Gateway. These HTTPRoutes use `*.mcp.local` hostnames (e.g., `test-server1.mcp.local`, `risk-server.mcp.local`) for internal routing through the Gateway's `mcps` listener:
+
+[source,bash]
+----
+oc apply -f manifests/04-register-mcp-servers/httproute-test.yaml
+oc apply -f manifests/04-register-mcp-servers/httproute-risk.yaml
+----
+
+=== Step 4: Create MCPServerRegistrations
+
+Register each server with the gateway:
+
+[source,bash]
+----
+oc apply -f manifests/04-register-mcp-servers/mcpsr-test.yaml
+oc apply -f manifests/04-register-mcp-servers/mcpsr-risk.yaml
+----
+
+== Verification
+
+=== Check MCPServerRegistration Status
+
+All registrations should show `Ready`:
+
+[source,bash]
+----
+oc get mcpsr -A
+----
+
+Expected output:
+
+[source]
+----
+NAMESPACE   NAME               READY
+mcp-test    test-server1       True
+mcp-test    risk-server        True
+----
+
+=== Check Controller Logs
+
+[source,bash]
+----
+oc logs -n mcp-gateway deployment/mcp-gateway-controller --tail=20
+----
+
+=== Check Broker Logs for Tool Discovery
+
+[source,bash]
+----
+oc logs -n mcp-gateway deployment/mcp-gateway --tail=30 | grep -i "tool"
+----
+
+You should see log lines indicating tools were discovered from each registered server.
+
+== About the MCP Servers
+
+=== Test Server
+
+A simple MCP server for basic validation. Uses the image `ghcr.io/kuadrant/mcp-gateway/test-server1:latest` with `command: ["/mcp-test-server"]` and `args: ["--http", "0.0.0.0:8080"]`.
+
+* `test1_greet` - Returns a greeting
+* `test1_headers` - Echoes request headers
+* `test1_add_tool` - Adds two numbers
+* `test1_slow` - Simulates a slow operation
+* `test1_time` - Returns the current server time
+
+=== Risk Server
+
+A mortgage risk assessment MCP server with six financial calculation tools:
+
+* `risk_calculate_dti` - Debt-to-Income ratio calculation
+* `risk_calculate_ltv` - Loan-to-Value ratio calculation
+* `risk_evaluate_credit_risk` - Credit score risk evaluation
+* `risk_assess_income_stability` - Employment stability assessment
+* `risk_assess_asset_sufficiency` - Asset coverage analysis
+* `risk_generate_risk_recommendation` - Overall risk recommendation
+
+== Appendix
+
+=== Directory Structure
+
+[source]
+----
+manifests/04-register-mcp-servers/
+  namespace.yaml
+  test-server/
+    kustomization.yaml
+    deployment.yaml
+    service.yaml
+  risk-server/
+    kustomization.yaml
+    deployment.yaml
+    service.yaml
+  httproute-test.yaml
+  httproute-risk.yaml
+  mcpsr-test.yaml
+  mcpsr-risk.yaml
+----
+
+== References
+
+* link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#mcp-gateway-api-reference_mcp-gateway-install[MCP Gateway API Reference]
+* link:https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/register-mcp-servers/[Upstream: Register MCP Servers]
+
+== Next step
+
+Proceed to xref:05-verification.adoc[Phase 5: Verification].

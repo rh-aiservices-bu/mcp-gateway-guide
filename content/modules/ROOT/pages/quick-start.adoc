@@ -1,0 +1,64 @@
+= Automated Setup
+
+Deploy {mcp-gw} on {ocp-short} using a single automation script.
+
+== Basic Installation (Phases 1-5)
+
+Installs the MCP Gateway operator, configures the Gateway, deploys two test MCP servers, and verifies tool discovery.
+
+[source,bash]
+----
+./scripts/setup-mcp-gateway.sh
+----
+
+== Full Installation with Auth (Phases 1-9)
+
+Adds Keycloak, authentication, authorization, and virtual MCP server configuration.
+
+[source,bash]
+----
+./scripts/setup-mcp-gateway.sh --with-auth
+----
+
+== Script Options
+
+[cols="1,2", options="header"]
+|===
+| Flag | Description
+
+| `--with-auth`
+| Include phases 6-9 (Keycloak, authentication, authorization, virtual servers)
+
+| `--from-phase N`
+| Resume from phase N (skips completed phases)
+
+| `--namespace NS`
+| Override the MCP gateway namespace (default: `mcp-gateway`)
+
+| `--dry-run`
+| Print commands without executing them
+|===
+
+== Verification
+
+After the script completes, run the verification script:
+
+[source,bash]
+----
+./scripts/verify.sh
+----
+
+This performs MCP session initialization and tool discovery, verifying that all registered MCP servers respond correctly through the gateway.
+
+== Teardown
+
+To remove all resources created by the guide:
+
+[source,bash]
+----
+./scripts/teardown.sh
+----
+
+== Next step
+
+For step-by-step instructions, start with xref:01-prerequisites.adoc[Phase 1: Prerequisites].

@@ -1,0 +1,121 @@
+= MCP Gateway on OpenShift Guide
+
+Guide to deploy and configure {mcp-gw} ({rhcl} 1.4) on {ocp-short}.
+
+* Kustomize manifests with status gates between every phase
+* Single automation script for end-to-end deployment
+* Real authentication and authorization examples with Keycloak
+* Two MCP servers (test, risk assessment) for hands-on validation
+
+Requires OpenShift 4.19+ with cluster-admin access.
+
+WARNING: {mcp-gw} is a Technology Preview feature in {rhcl} 1.4. Technology Preview features are not supported with Red Hat production service level agreements (SLAs) and might not be functionally complete.
+
+IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation]. It is a companion resource with opinionated Kustomize manifests and automation scripts to accelerate deployment.
+
+== What is MCP Gateway?
+
+The Model Context Protocol (MCP) Gateway provides enterprise-grade governance and security for AI agent traffic. It acts as a centralized control plane between AI agents and MCP servers, adding:
+
+* *Aggregation* - Combine multiple MCP servers behind a single endpoint
+* *Authentication* - OAuth 2.1 resource server with JWT validation
+* *Authorization* - Tool-level access control using CEL expressions
+* *Virtual Servers* - Curated tool collections for specific use cases
+
+== Getting Started
+
+Clone the repository and work from its root directory. All commands and file paths in this guide are relative to the cloned repo.
+
+[source,bash,subs="+attributes"]
+----
+git clone {repo-url}.git
+cd mcp-gateway-guide
+----
+
+You also need:
+
+* {ocp-short} 4.19+ cluster with `oc` CLI authenticated as cluster-admin
+* `envsubst`, `curl`, `jq` available on PATH
+
+== Phases
+
+Each phase has step-by-step instructions, status gates, and troubleshooting.
+
+=== Installation & Configuration
+
+[cols="1,3,1", options="header"]
+|===
+| Phase | Description | Time
+
+| xref:01-prerequisites.adoc[1. Prerequisites]
+| MCP Gateway operator subscription via OLM
+| 5 min
+
+| xref:02-gateway-setup.adoc[2. Gateway Setup]
+| Gateway object with MCP and mcps listeners using Istio
+| 5 min
+
+| xref:03-mcp-gateway-extension.adoc[3. MCP Gateway Extension]
+| MCPGatewayExtension CR, ReferenceGrant, HTTPRoute management
+| 5 min
+
+| xref:04-register-mcp-servers.adoc[4. Register MCP Servers]
+| Deploy test and risk MCP servers with MCPServerRegistration
+| 10 min
+
+| xref:05-verification.adoc[5. Verification]
+| End-to-end MCP session initialization and tool discovery
+| 5 min
+|===
+
+=== Authentication & Authorization
+
+[cols="1,3,1", options="header"]
+|===
+| Phase | Description | Time
+
+| xref:06-deploy-keycloak.adoc[6. Deploy Keycloak]
+| Keycloak as OAuth 2.1 authorization server with realm import
+| 5 min
+
+| xref:07-authentication.adoc[7. Authentication]
+| OAuth/JWT AuthPolicy for MCP Gateway, protected resource metadata
+| 5 min
+
+| xref:08-authorization.adoc[8. Authorization]
+| Tool-level authorization with CEL expressions and resource_access claims
+| 5 min
+
+| xref:09-virtual-servers.adoc[9. Virtual MCP Servers]
+| Curated tool collections with MCPVirtualServer CRs
+| 5 min
+|===
+
+== Automated Setup
+
+For end-to-end deployment using a single script, see the xref:quick-start.adoc[Automated Setup] page.
+
+== Key Custom Resources
+
+[cols="1,1,2", options="header"]
+|===
+| CRD | API Group | Purpose
+
+| `MCPGatewayExtension`
+| `mcp.kuadrant.io/v1alpha1`
+| Connects the MCP Gateway to a Gateway listener
+
+| `MCPServerRegistration`
+| `mcp.kuadrant.io/v1alpha1`
+| Registers an MCP server with the gateway via HTTPRoute
+
+| `MCPVirtualServer`
+| `mcp.kuadrant.io/v1alpha1`
+| Creates curated tool collections from registered servers
+|===
+
+== Documentation
+
+* link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[{rhcl} 1.4 {mcp-gw} Official Docs]
+* link:https://docs.kuadrant.io/dev/mcp-gateway/[Upstream MCP Gateway Documentation]
+* link:https://modelcontextprotocol.io/specification/2025-06-18/[MCP Specification]

@@ -1,0 +1,33 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: mcp-accept-header
+  namespace: mcp-gateway
+spec:
+  workloadSelector:
+    labels:
+      gateway.istio.io/managed: istio.io-gateway-controller
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.lua
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_string: |
+                function envoy_on_request(request_handle)
+                  local accept = request_handle:headers():get("accept")
+                  if accept == nil or accept == "" or accept == "*/*" then
+                    request_handle:headers():replace("accept", "application/json, text/event-stream")
+                  end
+                end

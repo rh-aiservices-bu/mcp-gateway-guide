@@ -1,0 +1,103 @@
+= Phase 2: Gateway Setup
+
+Create a Kubernetes Gateway object with an MCP listener for the {mcp-gw}.
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
+
+IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+
+== Overview
+
+The {mcp-gw} uses the Kubernetes Gateway API to expose MCP endpoints. On {ocp-short} 4.19+, the `istio` GatewayClass provides Gateway API support with Istio-based routing.
+
+The Gateway needs at least two listeners:
+
+* An `mcp` listener for external MCP protocol traffic
+* An `mcps` listener for internal backend routing to MCP servers
+
+The `mcps` listener uses a wildcard hostname (`*.mcp.local`) on port 8080 with HTTP protocol. This wildcard pattern simplifies backend routing - each MCP server gets a unique hostname (e.g., `test-server1.mcp.local`, `risk-server.mcp.local`) without requiring DNS configuration, since the traffic stays internal to the cluster.
+
+== Installation
+
+=== Step 1: Determine Your Cluster Domain
+
+The Gateway hostname is based on your cluster's application domain:
+
+[source,bash]
+----
+export CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')
+echo "Cluster domain: $CLUSTER_DOMAIN"
+----
+
+=== Step 2: Create the Gateway
+
+Generate the Gateway manifest with your cluster domain and apply it:
+
+[source,bash]
+----
+export MCP_HOSTNAME="mcp.${CLUSTER_DOMAIN}"
+echo "MCP hostname: $MCP_HOSTNAME"
+
+envsubst < manifests/02-gateway-setup/gateway.yaml.tmpl | oc apply -f -
+----
+
+This creates a Gateway in the `mcp-gateway` namespace with:
+
+* *mcp listener* (port 8080) - Main MCP protocol endpoint for external traffic
+* *mcps listener* (port 8080, hostname: `*.mcp.local`) - Internal listener for MCP server backend routing
+* *http listener* (port 80) - HTTP access for well-known endpoints
+* Hostname set to `mcp.<cluster-domain>` for the external listener
+* `gatewayClassName: istio`
+
+== Verification
+
+=== Wait for Gateway to be Programmed
+
+[source,bash]
+----
+oc wait gateway/mcp-gateway -n mcp-gateway \
+  --for=condition=Programmed --timeout=120s
+----
+
+=== Check Gateway Status
+
+[source,bash]
+----
+oc describe gateway mcp-gateway -n mcp-gateway
+----
+
+Look for the `Programmed` condition set to `True` and listener statuses showing `Attached`.
+
+=== Verify the Route is Created
+
+{ocp-short} automatically creates a Route for the Gateway:
+
+[source,bash]
+----
+oc get routes -n mcp-gateway
+----
+
+== DNS Management
+
+On cloud platforms ({ocp-short} on AWS, Azure, GCP), the OpenShift Ingress Operator automatically manages DNS records for Gateway hostnames.
+
+For bare-metal or non-cloud platforms, you may need to configure DNS manually or use MetalLB for LoadBalancer IP assignment. See the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#dns-management_mcp-gateway-install[DNS Management] section in the official documentation.
+
+== Appendix
+
+=== Directory Structure
+
+[source]
+----
+manifests/02-gateway-setup/
+  gateway.yaml.tmpl
+----
+
+== References
+
+* link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#configuring-a-gateway-for-the-mcp-gateway_mcp-gateway-install[Configuring a Gateway for the MCP Gateway]
+* link:https://gateway-api.sigs.k8s.io/[Kubernetes Gateway API]
+
+== Next step
+
+Proceed to xref:03-mcp-gateway-extension.adoc[Phase 3: MCP Gateway Extension].

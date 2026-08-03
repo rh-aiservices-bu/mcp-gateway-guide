@@ -1,0 +1,10 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPVirtualServer
+metadata:
+  name: basic-tools
+  namespace: mcp-gateway
+spec:
+  description: "Basic test and debug tools"
+  tools:
+    - test1_greet
+    - test1_headers

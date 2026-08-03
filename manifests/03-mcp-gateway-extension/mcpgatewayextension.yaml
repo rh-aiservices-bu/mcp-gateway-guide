@@ -1,0 +1,13 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: mcp-extension
+  namespace: mcp-gateway
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    namespace: mcp-gateway
+    sectionName: mcp
+  httpRouteManagement: Enabled

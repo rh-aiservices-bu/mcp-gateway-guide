@@ -1,0 +1,8 @@
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: mcp-gateway
+  namespace: mcp-gateway
+spec:
+  targetNamespaces:
+    - mcp-gateway

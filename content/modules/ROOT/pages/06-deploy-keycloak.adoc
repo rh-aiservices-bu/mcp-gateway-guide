@@ -1,0 +1,201 @@
+= Phase 6: Deploy Keycloak
+
+Deploy Keycloak as the OAuth 2.1 authorization server for {mcp-gw} authentication and authorization.
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
+
+IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+
+== Overview
+
+Keycloak provides OIDC/OAuth 2.1 capabilities for the {mcp-gw}. The realm configuration includes:
+
+* *MCP realm* - Dedicated realm for MCP Gateway authentication
+* *Public client* (`mcp-gateway`) - For CLI and browser-based OAuth flows with PKCE
+* *Resource server clients* - One per MCPServerRegistration (`mcp-test/test-server1`, `mcp-test/risk-server`), modeling tool-level roles with a `tool:` prefix
+* *Custom client scopes* - `groups` (group membership mapper) and `roles` (client role mapper using `resource_access.$\{client_id\}.roles` claim)
+* *Test users* - `mcp/mcp` (full access) and `restricted/restricted` (limited tool access)
+* *Groups* - `accounting`, `engineering`, `mcp-users` for group-based authorization
+
+=== User Access Matrix
+
+[cols="1,2,2", options="header"]
+|===
+| User | Tool Access | Groups
+
+| `mcp` (password: `mcp`)
+| All test1_ tools (greet, headers, add_tool, slow, time), all risk_ tools
+| accounting, engineering, mcp-users
+
+| `restricted` (password: `restricted`)
+| test1_greet only
+| mcp-users
+|===
+
+=== Role Naming Convention
+
+Tool-level roles use the `tool:` prefix format (e.g., `tool:greet`, `tool:calculate_dti`). This matches the upstream MCP Gateway authorization convention where the authorization CEL expression prepends `tool:` to the tool name from the `x-mcp-toolname` header.
+
+=== Deployment Options
+
+This guide provides two deployment approaches:
+
+* *Standalone Keycloak* - A Keycloak pod with ConfigMap-based realm import. Best for testing and clusters without the Red Hat Build of Keycloak (RHBK) operator.
+* *RHBK Operator* - Uses the `KeycloakRealmImport` CR to import the realm into an operator-managed Keycloak instance. Best for clusters that already have the RHBK operator installed.
+
+The realm configuration is identical in both approaches.
+
+== Installation
+
+=== Option A: Standalone Keycloak
+
+This deploys Keycloak in dev mode with the MCP realm imported from a ConfigMap.
+
+==== Step 1: Deploy Keycloak
+
+[source,bash]
+----
+oc apply -k manifests/06-deploy-keycloak/keycloak/
+----
+
+==== Step 2: Wait for Keycloak to be Ready
+
+[source,bash]
+----
+oc wait pod -n keycloak -l app=keycloak \
+  --for=condition=Ready --timeout=120s
+----
+
+=== Option B: RHBK Operator (KeycloakRealmImport)
+
+If your cluster already has the Red Hat Build of Keycloak operator managing a Keycloak instance, use the `KeycloakRealmImport` CR to import the MCP realm.
+
+==== Step 1: Apply the KeycloakRealmImport CR
+
+[source,bash]
+----
+oc apply -f manifests/06-deploy-keycloak/keycloak/keycloakrealmimport-mcp.yaml
+----
+
+The CR references the operator-managed Keycloak via `keycloakCRName: keycloak`. Adjust this if your Keycloak CR has a different name.
+
+==== Step 2: Verify the Import
+
+[source,bash]
+----
+oc get keycloakrealmimport -n keycloak
+----
+
+The import should show as completed. Check the Keycloak operator logs if the import fails.
+
+NOTE: If you need to re-import the realm (e.g., after role changes), you must delete the existing realm first via the Keycloak admin API: `curl -sk -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" "$\{KEYCLOAK_URL\}/admin/realms/mcp"`, then re-apply the CR.
+
+== Verification
+
+=== Get the Keycloak URL
+
+[source,bash]
+----
+export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+echo "Keycloak URL: $KEYCLOAK_URL"
+----
+
+=== Verify OIDC Discovery
+
+[source,bash]
+----
+curl -sk "${KEYCLOAK_URL}/realms/mcp/.well-known/openid-configuration" | jq '.issuer, .authorization_endpoint, .token_endpoint'
+----
+
+You should see the MCP realm endpoints.
+
+=== Access Keycloak Admin Console
+
+Open the Keycloak admin console in your browser:
+
+[source,bash]
+----
+echo "Admin console: ${KEYCLOAK_URL}/admin"
+----
+
+For standalone deployments, the admin credentials are `admin/admin`. For RHBK operator deployments, check the `keycloak-initial-admin` secret in the keycloak namespace.
+
+Navigate to the `mcp` realm to verify:
+
+* Clients: `mcp-gateway`, `mcp-test/test-server1`, `mcp-test/risk-server`
+* Users: `mcp`, `restricted`
+* Groups: `accounting`, `engineering`, `mcp-users`
+* Client scopes: `groups`, `roles`
+
+=== Test User Token
+
+Get a token for the `mcp` user to verify the realm is working:
+
+[source,bash]
+----
+curl -sk -X POST "${KEYCLOAK_URL}/realms/mcp/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=mcp-gateway" \
+  -d "username=mcp" \
+  -d "password=mcp" \
+  -d "scope=openid groups roles" | jq '.access_token' -r | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '.resource_access, .groups'
+----
+
+You should see the `resource_access` claim with `tool:` prefixed roles per MCP server and the user's groups:
+
+[source,json]
+----
+{
+  "mcp-test/test-server1": {
+    "roles": ["tool:greet", "tool:headers", "tool:time", "tool:slow", "tool:add_tool"]
+  },
+  "mcp-test/risk-server": {
+    "roles": [
+      "tool:calculate_dti",
+      "tool:calculate_ltv",
+      "tool:evaluate_credit_risk",
+      "tool:assess_income_stability",
+      "tool:assess_asset_sufficiency",
+      "tool:generate_risk_recommendation"
+    ]
+  }
+}
+----
+
+NOTE: The token scope should be `openid groups roles`. Do not include `profile` or `email` scopes unless they are explicitly defined as custom client scopes in the realm - the default built-in scopes may not exist when using the KeycloakRealmImport approach.
+
+== Appendix
+
+=== Directory Structure
+
+[source]
+----
+manifests/06-deploy-keycloak/
+  keycloak/
+    kustomization.yaml
+    namespace.yaml
+    deployment.yaml
+    service.yaml
+    route.yaml
+    realm-configmap.yaml           <-- Standalone Keycloak realm
+    keycloakrealmimport-mcp.yaml   <-- RHBK operator realm import
+----
+
+=== KC_HOSTNAME Configuration
+
+The Keycloak deployment sets `KC_HOSTNAME` to the in-cluster service DNS (`keycloak.keycloak.svc.cluster.local`). This ensures the `issuer` claim in JWT tokens matches what Authorino uses for OIDC discovery from inside the cluster. The Route provides external access via edge TLS termination.
+
+=== clientScopeMappings
+
+The realm includes `clientScopeMappings` that allow the `mcp-gateway` public client to receive tool roles from the resource server clients (`mcp-test/test-server1`, `mcp-test/risk-server`) in its access tokens. Without these mappings, the `resource_access` claim in the token would not contain the tool roles.
+
+== References
+
+* link:https://www.keycloak.org/documentation[Keycloak Documentation]
+* link:https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/authentication/[Upstream: Authentication Configuration]
+* link:https://docs.redhat.com/en/documentation/red_hat_build_of_keycloak/26.0/html/operator_guide/[RHBK Operator Guide]
+
+== Next step
+
+Proceed to xref:07-authentication.adoc[Phase 7: Authentication].
