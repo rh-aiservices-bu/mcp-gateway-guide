@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-gateway-ui
+  labels:
+    app: mcp-gateway-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-gateway-ui
+  template:
+    metadata:
+      labels:
+        app: mcp-gateway-ui
+    spec:
+      containers:
+        - name: ui
+          image: quay.io/rcarrata/mcp-gateway-ui:latest
+          args:
+            - "--url"
+            - "$(MCP_GATEWAY_URL)"
+          env:
+            - name: MCP_GATEWAY_URL
+              value: "CHANGE_ME"
+          ports:
+            - containerPort: 8501
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-gateway-ui
+  labels:
+    app: mcp-gateway-ui
+spec:
+  selector:
+    app: mcp-gateway-ui
+  ports:
+    - port: 8501
+      targetPort: 8501
+      protocol: TCP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mcp-gateway-ui
+  labels:
+    app: mcp-gateway-ui
+spec:
+  to:
+    kind: Service
+    name: mcp-gateway-ui
+  port:
+    targetPort: 8501
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

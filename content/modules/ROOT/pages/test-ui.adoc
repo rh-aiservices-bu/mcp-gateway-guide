@@ -1,0 +1,91 @@
+= MCP Gateway Test UI
+
+Interactive Streamlit application for testing and demonstrating {mcp-gw} connectivity, protocol flow, and tool discovery.
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
+
+== Overview
+
+The test UI provides:
+
+* *Protocol flow visualization* - Run the full MCP handshake (initialize, notify, tools/list, tools/call) and see each step pass or fail
+* *Authentication support* - Get OAuth tokens from Keycloak and test authenticated requests
+* *Tool catalog* - Browse all discovered tools with their parameters, and call them interactively
+* *Embedded flow visualizer* - Interactive animated architecture diagram showing how requests travel through the gateway
+
+== Run Locally
+
+Install Streamlit and run the UI against your cluster:
+
+[source,bash]
+----
+pip install streamlit requests
+export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
+
+streamlit run scripts/mcp-gateway-test-ui/mcp-gateway-ui.py -- \
+  --url "http://${MCP_HOSTNAME}"
+----
+
+The UI opens at `http://localhost:8501`.
+
+=== With Authentication
+
+1. Check *Enable Authentication* in the sidebar
+2. Enter your Keycloak issuer URL (e.g., `https://sso.apps.example.com/realms/mcp`)
+3. Enter credentials (`mcp` / `mcp` for full access, `restricted` / `restricted` for limited access)
+4. Click *Get Token* to obtain an OAuth access token
+5. Click *Run Discovery* to test the authenticated flow
+
+== Deploy on OpenShift
+
+=== Step 1: Build the Container Image
+
+[source,bash]
+----
+podman build --platform linux/amd64 \
+  -f scripts/mcp-gateway-test-ui/Containerfile \
+  -t quay.io/rcarrata/mcp-gateway-ui:latest \
+  scripts/mcp-gateway-test-ui/
+----
+
+Push to your registry:
+
+[source,bash]
+----
+podman push quay.io/rcarrata/mcp-gateway-ui:latest
+----
+
+=== Step 2: Update the Gateway URL
+
+Edit `scripts/mcp-gateway-test-ui/deployment.yaml` and replace `CHANGE_ME` with your MCP Gateway URL:
+
+[source,bash]
+----
+export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
+
+sed "s|CHANGE_ME|http://${MCP_HOSTNAME}|" \
+  scripts/mcp-gateway-test-ui/deployment.yaml | oc apply -n mcp-gateway -f -
+----
+
+=== Step 3: Access the UI
+
+[source,bash]
+----
+echo "https://$(oc get route mcp-gateway-ui -n mcp-gateway -o jsonpath='{.spec.host}')"
+----
+
+== Directory Structure
+
+[source]
+----
+scripts/mcp-gateway-test-ui/
+  mcp-gateway-ui.py     <-- Streamlit application
+  Containerfile         <-- Container build (python:3.12-slim)
+  deployment.yaml       <-- Deployment + Service + Route
+----
+
+== References
+
+* link:https://streamlit.io/[Streamlit Documentation]
+* link:https://noyitz.github.io/ai-gateway-docs/mcp-gateway/[MCP Gateway Flow Visualizer]
+* xref:architecture.adoc[Architecture & Request Flow]
