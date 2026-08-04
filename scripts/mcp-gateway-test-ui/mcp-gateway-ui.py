@@ -373,8 +373,8 @@ with st.sidebar:
 
     st.divider()
     st.caption("MCP Gateway Protocol Tester")
-    st.caption("[Guide](https://rcarrata.github.io/mcp-gateway-guide/) | "
-               "[Source](https://github.com/rcarrata/mcp-gateway-guide)")
+    st.caption("[Guide](https://rh-aiservices-bu.github.io/mcp-gateway-guide/) | "
+               "[Source](https://github.com/rh-aiservices-bu/mcp-gateway-guide)")
 
 
 # ---------------------------------------------------------------------------

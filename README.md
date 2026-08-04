@@ -10,7 +10,7 @@ Step-by-step guide for installing and configuring MCP Gateway (Red Hat Connectiv
 ## Quick Start
 
 ```bash
-git clone https://github.com/rcarrata/mcp-gateway-guide.git
+git clone https://github.com/rh-aiservices-bu/mcp-gateway-guide.git
 cd mcp-gateway-guide
 
 # Full installation (phases 1-5)

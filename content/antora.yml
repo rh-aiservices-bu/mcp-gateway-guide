@@ -12,4 +12,4 @@ asciidoc:
     rhcl: "Red Hat Connectivity Link"
     ocp-short: "OpenShift"
     mcp-gw: "MCP Gateway"
-    repo-url: "https://github.com/rcarrata/mcp-gateway-guide"
+    repo-url: "https://github.com/rh-aiservices-bu/mcp-gateway-guide"
