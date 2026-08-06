@@ -76,6 +76,8 @@ A template version of the full MCPGatewayExtension manifest with OAuth is availa
 
 Before AuthPolicy resources can be enforced, Kuadrant needs to be properly configured.
 
+TIP: For a detailed explanation of each manifest and the request flow, see the link:{repo-url}/tree/main/manifests/07-authentication[manifests/07-authentication README].
+
 ==== Verify OperatorGroup is AllNamespaces Mode
 
 The Authorino operator (installed as a dependency of the MCP Gateway operator) requires the OperatorGroup to be in AllNamespaces mode. If you followed Phase 1, the OperatorGroup was already created with `spec: {}` (AllNamespaces). Verify:
