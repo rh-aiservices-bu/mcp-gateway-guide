@@ -8,7 +8,7 @@ IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/
 
 == Overview
 
-The {mcp-gw} uses the Kubernetes Gateway API to expose MCP endpoints. On {ocp-short} 4.19+, the `istio` GatewayClass provides Gateway API support with Istio-based routing.
+The {mcp-gw} uses the Kubernetes Gateway API to expose MCP endpoints. The `istio` GatewayClass, provided by OpenShift Service Mesh 3 (OSSM3), handles Gateway API support for the MCP Gateway.
 
 The Gateway needs at least two listeners:
 
@@ -45,9 +45,21 @@ This creates a Gateway in the `mcp-gateway` namespace with:
 
 * *mcp listener* (port 8080) - Main MCP protocol endpoint for external traffic
 * *mcps listener* (port 8080, hostname: `*.mcp.local`) - Internal listener for MCP server backend routing
-* *http listener* (port 80) - HTTP access for well-known endpoints
 * Hostname set to `mcp.<cluster-domain>` for the external listener
 * `gatewayClassName: istio`
+
+NOTE: With the `istio` GatewayClass, the gateway proxy (Envoy) deploys in the `mcp-gateway` namespace as `mcp-gateway-istio`. Both the Gateway object and the proxy deployment live in the same namespace.
+
+=== Step 3: Create the OpenShift Route
+
+The `istio` GatewayClass creates a LoadBalancer service, but on bare-metal or workshop clusters without MetalLB, external access requires an OpenShift Route:
+
+[source,bash]
+----
+envsubst < manifests/02-gateway-setup/route.yaml.tmpl | oc apply -f -
+----
+
+This creates an edge-TLS Route that bridges external traffic from the default HAProxy ingress controller to the gateway service on port 8080.
 
 == Verification
 
@@ -70,7 +82,7 @@ Look for the `Programmed` condition set to `True` and listener statuses showing 
 
 === Verify the Route is Created
 
-{ocp-short} automatically creates a Route for the Gateway:
+Check the Route was created in the `mcp-gateway` namespace:
 
 [source,bash]
 ----
@@ -79,9 +91,9 @@ oc get routes -n mcp-gateway
 
 == DNS Management
 
-On cloud platforms ({ocp-short} on AWS, Azure, GCP), the OpenShift Ingress Operator automatically manages DNS records for Gateway hostnames.
+The OpenShift Route uses the cluster's wildcard DNS (`*.apps.<cluster-domain>`), so no additional DNS configuration is needed. The Route bridges external traffic through the default HAProxy ingress controller to the gateway service.
 
-For bare-metal or non-cloud platforms, you may need to configure DNS manually or use MetalLB for LoadBalancer IP assignment. See the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#dns-management_mcp-gateway-install[DNS Management] section in the official documentation.
+On cloud platforms ({ocp-short} on AWS, Azure, GCP), you could alternatively use MetalLB or cloud LoadBalancer for direct access to the `istio` gateway service. See the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#dns-management_mcp-gateway-install[DNS Management] section in the official documentation.
 
 == Appendix
 
@@ -91,6 +103,7 @@ For bare-metal or non-cloud platforms, you may need to configure DNS manually or
 ----
 manifests/02-gateway-setup/
   gateway.yaml.tmpl
+  route.yaml.tmpl            <-- OpenShift Route for external access
 ----
 
 == References

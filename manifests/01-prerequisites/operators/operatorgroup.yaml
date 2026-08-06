@@ -3,6 +3,4 @@ kind: OperatorGroup
 metadata:
   name: mcp-gateway
   namespace: mcp-gateway
-spec:
-  targetNamespaces:
-    - mcp-gateway
+spec: {}

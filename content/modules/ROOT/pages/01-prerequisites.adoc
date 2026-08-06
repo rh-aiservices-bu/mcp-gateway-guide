@@ -29,14 +29,48 @@ The {mcp-gw} is delivered as an operator through the Red Hat Operator catalog. T
 
 == Installation
 
-=== Step 1: Create the Namespace
+=== Step 1: Install OpenShift Service Mesh 3
+
+The {mcp-gw} requires the `istio` GatewayClass, which is provided by OpenShift Service Mesh 3 (OSSM3). Install the OSSM3 operator:
+
+[source,bash]
+----
+oc apply -k manifests/01-prerequisites/service-mesh/
+----
+
+Wait for the OSSM3 operator to be ready:
+
+[source,bash]
+----
+oc wait csv -n openshift-operators \
+  -l operators.coreos.com/servicemeshoperator3.openshift-operators="" \
+  --for=jsonpath='{.status.phase}'=Succeeded --timeout=600s
+----
+
+Create the Istio and IstioCNI control plane resources:
+
+[source,bash]
+----
+oc apply -f manifests/01-prerequisites/service-mesh/istio.yaml
+----
+
+Wait for Istio to become ready:
+
+[source,bash]
+----
+oc wait istio/default --for=condition=Ready --timeout=300s
+----
+
+TIP: The Istio control plane takes 2-3 minutes to become ready. If `oc wait` returns "no matching resources found", wait a moment and retry.
+
+=== Step 2: Create the Namespace
 
 [source,bash]
 ----
 oc apply -f manifests/01-prerequisites/operators/namespace.yaml
 ----
 
-=== Step 2: Install the MCP Gateway Operator
+=== Step 3: Install the MCP Gateway Operator
 
 [source,bash]
 ----
@@ -96,6 +130,10 @@ manifests/01-prerequisites/
     namespace.yaml
     operatorgroup.yaml
     subscription.yaml
+  service-mesh/
+    kustomization.yaml
+    subscription.yaml        <-- OSSM3 operator subscription
+    istio.yaml               <-- Istio + IstioCNI control plane
 ----
 
 == References

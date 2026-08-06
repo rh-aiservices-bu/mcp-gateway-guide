@@ -27,7 +27,7 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --with-auth       Include phases 6-9 (Keycloak, auth, authz, virtual servers)"
+    echo "  --with-auth       Include phases 6-9 (RHBK realm, auth, authz, virtual servers)"
     echo "  --from-phase N    Start from phase N (skip completed phases)"
     echo "  --namespace NS    MCP gateway namespace (default: mcp-gateway)"
     echo "  --dry-run         Print commands without executing"
@@ -78,17 +78,47 @@ check_prerequisites() {
 
 # Phase 1: Prerequisites
 phase_1() {
-    log_phase 1 "Prerequisites - Install MCP Gateway Operator"
+    log_phase 1 "Prerequisites - Install Service Mesh and MCP Gateway Operator"
 
-    log_step "Creating namespace and operator subscription"
+    log_step "Installing OpenShift Service Mesh 3 operator"
+    run "oc apply -k ${REPO_ROOT}/manifests/01-prerequisites/service-mesh/"
+
+    log_step "Waiting for OSSM3 operator CSV to succeed..."
+    for i in {1..30}; do
+        CSV_PHASE=$(oc get csv -n openshift-operators -l operators.coreos.com/servicemeshoperator3.openshift-operators="" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+        if [[ "$CSV_PHASE" == "Succeeded" ]]; then
+            log_ok "OSSM3 operator ready"
+            break
+        fi
+        sleep 10
+    done
+
+    log_step "Creating Istio control plane"
+    run "oc apply -f ${REPO_ROOT}/manifests/01-prerequisites/service-mesh/istio.yaml"
+
+    log_step "Waiting for Istio to be ready..."
+    for i in {1..30}; do
+        READY=$(oc get istio default -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+        if [[ "$READY" == "True" ]]; then
+            log_ok "Istio control plane ready"
+            break
+        fi
+        sleep 10
+    done
+
+    log_step "Creating namespace and MCP Gateway operator subscription"
     run "oc apply -k ${REPO_ROOT}/manifests/01-prerequisites/operators/"
 
-    log_step "Waiting for operator CSV to succeed (this may take a few minutes)..."
+    log_step "Waiting for MCP Gateway operator CSV to succeed (this may take a few minutes)..."
     run "sleep 30"
-    run "oc wait csv -n ${MCP_NS} -l operators.coreos.com/mcp-gateway.${MCP_NS}='' --for=jsonpath='{.status.phase}'=Succeeded --timeout=600s" || {
-        log_warn "CSV wait timed out. Checking status..."
-        oc get csv -n "$MCP_NS" 2>/dev/null || true
-    }
+    for i in {1..30}; do
+        CSV_PHASE=$(oc get csv -n ${MCP_NS} -l operators.coreos.com/mcp-gateway.${MCP_NS}="" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+        if [[ "$CSV_PHASE" == "Succeeded" ]]; then
+            log_ok "MCP Gateway operator ready"
+            break
+        fi
+        sleep 10
+    done
 
     log_step "Verifying CRDs"
     run "oc get crd mcpgatewayextensions.mcp.kuadrant.io"
@@ -104,8 +134,19 @@ phase_2() {
     log_step "Creating Gateway with MCP listener"
     run "envsubst < ${REPO_ROOT}/manifests/02-gateway-setup/gateway.yaml.tmpl | oc apply -f -"
 
-    log_step "Waiting for Gateway to be Programmed..."
-    run "oc wait gateway/mcp-gateway -n ${MCP_NS} --for=condition=Programmed --timeout=120s"
+    log_step "Waiting for Gateway to be accepted and proxy pod to be ready..."
+    run "oc wait gateway/mcp-gateway -n ${MCP_NS} --for=condition=Accepted --timeout=120s"
+    for i in {1..30}; do
+        POD_READY=$(oc get pods -n ${MCP_NS} -l gateway.networking.k8s.io/gateway-name=mcp-gateway -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+        if [[ "$POD_READY" == "True" ]]; then
+            log_ok "Gateway proxy pod is ready"
+            break
+        fi
+        sleep 5
+    done
+
+    log_step "Creating OpenShift Route for external access"
+    run "envsubst < ${REPO_ROOT}/manifests/02-gateway-setup/route.yaml.tmpl | oc apply -f -"
 
     log_ok "Phase 2 complete"
 }
@@ -148,8 +189,21 @@ phase_4() {
     run "oc apply -f ${REPO_ROOT}/manifests/04-register-mcp-servers/mcpsr-test.yaml"
     run "oc apply -f ${REPO_ROOT}/manifests/04-register-mcp-servers/mcpsr-risk.yaml"
 
+    log_step "Restarting broker to load server config"
+    run "oc rollout restart deployment/mcp-gateway -n ${MCP_NS}"
+    run "oc rollout status deployment/mcp-gateway -n ${MCP_NS} --timeout=60s"
+
+    log_step "Waiting for MCPServerRegistrations to become Ready..."
+    for i in {1..20}; do
+        READY_COUNT=$(oc get mcpsr -A -o jsonpath='{range .items[*]}{.status.ready}{"\n"}{end}' 2>/dev/null | grep -c "true" || echo "0")
+        if [[ "$READY_COUNT" -ge 2 ]]; then
+            log_ok "All MCPServerRegistrations ready ($READY_COUNT)"
+            break
+        fi
+        sleep 5
+    done
+
     log_step "Checking MCPServerRegistration status"
-    run "sleep 5"
     run "oc get mcpsr -A"
 
     log_ok "Phase 4 complete"
@@ -165,19 +219,48 @@ phase_5() {
     log_ok "Phase 5 complete"
 }
 
-# Phase 6: Deploy Keycloak
+# Phase 6: Configure RHBK
 phase_6() {
-    log_phase 6 "Deploy Keycloak"
+    log_phase 6 "Configure RHBK (Deploy Keycloak + Realm Import)"
 
-    log_step "Deploying Keycloak with realm import"
+    log_step "Installing RHBK operator in mcp-test namespace"
+    run "oc apply -k ${REPO_ROOT}/manifests/06-deploy-keycloak/operator/"
+
+    log_step "Waiting for RHBK operator CSV to succeed..."
+    for i in {1..30}; do
+        CSV_PHASE=$(oc get csv -n mcp-test -l operators.coreos.com/rhbk-operator.mcp-test="" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+        if [[ "$CSV_PHASE" == "Succeeded" ]]; then
+            log_ok "RHBK operator ready"
+            break
+        fi
+        sleep 10
+    done
+
+    log_step "Deploying PostgreSQL, Keycloak CR, and realm import"
     run "oc apply -k ${REPO_ROOT}/manifests/06-deploy-keycloak/keycloak/"
 
-    log_step "Waiting for Keycloak to be ready..."
-    run "oc wait pod -n keycloak -l app=keycloak --for=condition=Ready --timeout=180s"
+    log_step "Waiting for PostgreSQL to be ready..."
+    run "oc wait pod -n mcp-test -l app=keycloak-pgsql --for=condition=Ready --timeout=120s" || log_warn "PostgreSQL not ready yet"
 
-    export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+    log_step "Waiting for Keycloak to be ready..."
+    run "oc wait keycloak/keycloak -n mcp-test --for=condition=Ready --timeout=300s" || {
+        log_warn "Keycloak ready check timed out. Checking status..."
+        oc get keycloak keycloak -n mcp-test 2>/dev/null || true
+    }
+
+    log_step "Waiting for KeycloakRealmImport to complete..."
+    run "sleep 10"
+    run "oc wait keycloakrealmimport/mcp -n mcp-test --for=condition=Done=true --timeout=120s" || {
+        log_warn "KeycloakRealmImport condition wait timed out. Checking status..."
+        oc get keycloakrealmimport mcp -n mcp-test 2>/dev/null || true
+    }
+
+    log_step "Creating Keycloak Route"
+    run "oc create route edge keycloak --service=keycloak-service --port=8080 -n mcp-test 2>/dev/null || true"
+
+    export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
     export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
-    log_ok "Keycloak URL: $KEYCLOAK_URL"
+    log_ok "RHBK URL: $KEYCLOAK_URL"
 
     log_step "Verifying OIDC discovery"
     run "sleep 5"
@@ -190,9 +273,27 @@ phase_6() {
 phase_7() {
     log_phase 7 "Authentication"
 
-    export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+    export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
     export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
-    export MCP_URL="http://${MCP_HOSTNAME}/mcp"
+    export MCP_URL="https://${MCP_HOSTNAME}/mcp"
+
+    log_step "Creating Kuadrant CR (if not already present)"
+    run "oc apply -f ${REPO_ROOT}/manifests/07-authentication/kuadrant.yaml"
+
+    log_step "Waiting for Kuadrant to be ready..."
+    for i in {1..20}; do
+        READY=$(oc get kuadrant kuadrant -n ${MCP_NS} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+        if [[ "$READY" == "True" ]]; then
+            log_ok "Kuadrant ready"
+            break
+        fi
+        if [[ "$i" -eq 5 ]]; then
+            log_step "Restarting Kuadrant operator (may need to detect Istio)..."
+            oc delete pod -n ${MCP_NS} -l app.kubernetes.io/component=manager,app.kubernetes.io/part-of=kuadrant 2>/dev/null || \
+            oc delete pod -n ${MCP_NS} $(oc get pods -n ${MCP_NS} -o name | grep kuadrant-operator-controller | head -1 | sed 's|pod/||') 2>/dev/null || true
+        fi
+        sleep 10
+    done
 
     log_step "Configuring OAuth via MCPGatewayExtension oauthProtectedResource"
     run "envsubst < ${REPO_ROOT}/manifests/07-authentication/mcpgatewayextension-oauth-patch.yaml.tmpl | oc apply -f -"
@@ -200,50 +301,6 @@ phase_7() {
     log_step "Waiting for broker rollout..."
     run "sleep 10"
     run "oc rollout status deployment/mcp-gateway -n ${MCP_NS} --timeout=60s"
-
-    log_step "Setting up Kuadrant for AuthPolicy enforcement"
-
-    log_step "Ensuring OperatorGroup supports AllNamespaces mode"
-    OG_NAME=$(oc get operatorgroup -n ${MCP_NS} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-    if [[ -n "$OG_NAME" ]]; then
-        OG_TARGET=$(oc get operatorgroup "$OG_NAME" -n ${MCP_NS} -o jsonpath='{.spec.targetNamespaces}' 2>/dev/null || true)
-        if [[ -n "$OG_TARGET" && "$OG_TARGET" != "[]" ]]; then
-            log_warn "OperatorGroup has targetNamespaces set (OwnNamespace mode)"
-            log_step "Recreating OperatorGroup in AllNamespaces mode (required by Authorino)"
-            run "oc delete operatorgroup '$OG_NAME' -n ${MCP_NS}"
-            run "cat <<EOF | oc apply -f -
-apiVersion: operators.coreos.com/v1
-kind: OperatorGroup
-metadata:
-  name: ${MCP_NS}-og
-  namespace: ${MCP_NS}
-spec: {}
-EOF"
-        fi
-    fi
-
-    log_step "Checking Authorino operator"
-    AUTHORINO_CSV=$(oc get csv -n ${MCP_NS} -l operators.coreos.com/authorino-operator.${MCP_NS}='' -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-    if [[ -z "$AUTHORINO_CSV" ]]; then
-        log_warn "Authorino operator CSV not found. It should be installed as a dependency of MCP Gateway."
-        log_warn "If AuthPolicy enforcement fails, install the Authorino operator manually."
-    else
-        log_ok "Authorino operator found: $AUTHORINO_CSV"
-    fi
-
-    log_step "Creating Kuadrant CR (required for AuthPolicy enforcement)"
-    run "oc apply -f ${REPO_ROOT}/manifests/07-authentication/kuadrant.yaml"
-
-    log_step "Waiting for Kuadrant to be ready..."
-    run "sleep 15"
-    run "oc wait kuadrant/kuadrant -n ${MCP_NS} --for=condition=Ready --timeout=120s" || log_warn "Kuadrant ready check timed out"
-
-    log_step "Restarting gateway to load WASM plugin"
-    ISTIO_DEPLOY=$(oc get deployment -n ${MCP_NS} -l istio.io/gateway-name=mcp-gateway -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-    if [[ -n "$ISTIO_DEPLOY" ]]; then
-        run "oc rollout restart deployment/${ISTIO_DEPLOY} -n ${MCP_NS}"
-        run "oc rollout status deployment/${ISTIO_DEPLOY} -n ${MCP_NS} --timeout=60s"
-    fi
 
     log_step "Applying authentication AuthPolicy"
     run "envsubst < ${REPO_ROOT}/manifests/07-authentication/authpolicy-auth.yaml.tmpl | oc apply -f -"
@@ -253,11 +310,12 @@ EOF"
     run "oc wait authpolicy/mcp-auth-policy -n ${MCP_NS} --for=condition=Enforced --timeout=60s" || log_warn "AuthPolicy enforcement check timed out"
 
     log_step "Verifying OAuth discovery"
-    run "curl -s 'http://${MCP_HOSTNAME}/.well-known/oauth-protected-resource' | jq '.resource_name'"
+    run "curl -sk 'https://${MCP_HOSTNAME}/.well-known/oauth-protected-resource' | jq '.resource_name'"
 
     log_step "Verifying unauthenticated request returns 401"
-    HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://${MCP_HOSTNAME}/mcp" \
+    HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' -X POST "https://${MCP_HOSTNAME}/mcp" \
         -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
     if [[ "$HTTP_CODE" == "401" ]]; then
         log_ok "Unauthenticated request correctly returns 401"
@@ -272,7 +330,7 @@ EOF"
 phase_8() {
     log_phase 8 "Authorization"
 
-    export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+    export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
     export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
 
     log_step "Applying authorization AuthPolicy (targets internal mcps listener)"

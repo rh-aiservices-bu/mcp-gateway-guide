@@ -9,7 +9,7 @@ TIP: All file paths and `oc apply` commands in this guide are relative to the li
 The test UI provides:
 
 * *Protocol flow visualization* - Run the full MCP handshake (initialize, notify, tools/list, tools/call) and see each step pass or fail
-* *Authentication support* - Get OAuth tokens from Keycloak and test authenticated requests
+* *Authentication support* - Get OAuth tokens from {rhbk} and test authenticated requests
 * *Tool catalog* - Browse all discovered tools with their parameters, and call them interactively
 * *Embedded flow visualizer* - Interactive animated architecture diagram showing how requests travel through the gateway
 
@@ -23,7 +23,7 @@ pip install streamlit requests
 export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
 
 streamlit run scripts/mcp-gateway-test-ui/mcp-gateway-ui.py -- \
-  --url "http://${MCP_HOSTNAME}"
+  --url "https://${MCP_HOSTNAME}"
 ----
 
 The UI opens at `http://localhost:8501`.
@@ -31,7 +31,7 @@ The UI opens at `http://localhost:8501`.
 === With Authentication
 
 1. Check *Enable Authentication* in the sidebar
-2. Enter your Keycloak issuer URL (e.g., `https://sso.apps.example.com/realms/mcp`)
+2. Enter your {rhbk} issuer URL (e.g., `https://sso.apps.example.com/realms/mcp`)
 3. Enter credentials (`mcp` / `mcp` for full access, `restricted` / `restricted` for limited access)
 4. Click *Get Token* to obtain an OAuth access token
 5. Click *Run Discovery* to test the authenticated flow
@@ -63,7 +63,7 @@ Edit `scripts/mcp-gateway-test-ui/deployment.yaml` and replace `CHANGE_ME` with 
 ----
 export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
 
-sed "s|CHANGE_ME|http://${MCP_HOSTNAME}|" \
+sed "s|CHANGE_ME|https://${MCP_HOSTNAME}|" \
   scripts/mcp-gateway-test-ui/deployment.yaml | oc apply -n mcp-gateway -f -
 ----
 

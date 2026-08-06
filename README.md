@@ -1,11 +1,11 @@
 # MCP Gateway on OpenShift Guide
 
-Step-by-step guide for installing and configuring MCP Gateway (Red Hat Connectivity Link 1.4) on OpenShift, with real examples of authentication and authorization using Keycloak.
+Step-by-step guide for installing and configuring MCP Gateway (Red Hat Connectivity Link 1.4) on OpenShift, with real examples of authentication and authorization using Red Hat Build of Keycloak (RHBK).
 
 ## What's Inside
 
 - **Part 1 - Installation & Configuration**: OLM-based operator install, Gateway setup, MCPGatewayExtension, MCP server registration, and end-to-end verification
-- **Part 2 - Authentication & Authorization**: Keycloak deployment, OAuth 2.1 / JWT authentication with AuthPolicy, tool-level authorization using CEL expressions, and virtual MCP servers
+- **Part 2 - Authentication & Authorization**: RHBK deployment, OAuth 2.1 / JWT authentication with AuthPolicy, tool-level authorization using CEL expressions, and virtual MCP servers
 
 ## Quick Start
 

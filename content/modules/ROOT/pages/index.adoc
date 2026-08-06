@@ -4,7 +4,7 @@ Guide to deploy and configure {mcp-gw} ({rhcl} 1.4) on {ocp-short}.
 
 * Kustomize manifests with status gates between every phase
 * Single automation script for end-to-end deployment
-* Real authentication and authorization examples with Keycloak
+* Real authentication and authorization examples with {rhbk}
 * Two MCP servers (test, risk assessment) for hands-on validation
 
 Requires OpenShift 4.19+ with cluster-admin access.
@@ -52,7 +52,7 @@ Each phase has step-by-step instructions, status gates, and troubleshooting.
 | 5 min
 
 | xref:02-gateway-setup.adoc[2. Gateway Setup]
-| Gateway object with MCP and mcps listeners using Istio
+| Gateway object with MCP and mcps listeners
 | 5 min
 
 | xref:03-mcp-gateway-extension.adoc[3. MCP Gateway Extension]
@@ -74,8 +74,8 @@ Each phase has step-by-step instructions, status gates, and troubleshooting.
 |===
 | Phase | Description | Time
 
-| xref:06-deploy-keycloak.adoc[6. Deploy Keycloak]
-| Keycloak as OAuth 2.1 authorization server with realm import
+| xref:06-deploy-keycloak.adoc[6. Configure {rhbk}]
+| {rhbk} as OAuth 2.1 authorization server with realm import
 | 5 min
 
 | xref:07-authentication.adoc[7. Authentication]

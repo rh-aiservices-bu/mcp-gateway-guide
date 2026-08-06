@@ -13,7 +13,7 @@ spec:
   httpRouteManagement: Enabled
   oauthProtectedResource:
     resourceName: "MCP Gateway"
-    resource: "http://${MCP_HOSTNAME}/mcp"
+    resource: "https://${MCP_HOSTNAME}/mcp"
     authorizationServers:
       - "${KEYCLOAK_ISSUER}"
     bearerMethodsSupported:

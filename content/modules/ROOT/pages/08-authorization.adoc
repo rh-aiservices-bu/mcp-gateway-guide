@@ -66,7 +66,12 @@ The `mcp` user has access to all tools on both servers. The `restricted` user on
 
 === When Authorization is Skipped
 
-The authorization `when` condition checks for the presence of the `x-mcp-toolname` header. Requests that don't invoke a specific tool (like `initialize`, `tools/list`) will not have this header and will pass through without authorization checks.
+The authorization `when` conditions ensure the policy only evaluates during actual tool execution:
+
+* `x-mcp-toolname` header must be present (set by the broker for tool-related requests)
+* `x-mcp-method` header must equal `tools/call` (distinguishes tool execution from session setup)
+
+The broker sets `x-mcp-toolname` on all requests to backend servers, including during session creation (`initialize`, `notifications/initialized`). Without the `x-mcp-method` filter, the authorization would deny session setup requests, causing the broker to return a misleading `500 Internal Server Error` instead of a clean `403 Forbidden`.
 
 == Installation
 
@@ -74,7 +79,7 @@ The authorization `when` condition checks for the presence of the `x-mcp-toolnam
 
 [source,bash]
 ----
-export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
 export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
 
 envsubst < manifests/08-authorization/authpolicy-authz.yaml.tmpl | oc apply -f -
@@ -133,7 +138,7 @@ TOKEN=$(curl -sk -X POST "${KEYCLOAK_ISSUER}/protocol/openid-connect/token" \
   -d "grant_type=password&client_id=mcp-gateway&username=mcp&password=mcp&scope=openid groups roles" | jq -r '.access_token')
 
 # Initialize session
-curl -s -D /tmp/mcp_headers -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -D /tmp/mcp_headers -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKEN}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
@@ -141,7 +146,7 @@ curl -s -D /tmp/mcp_headers -X POST "http://${MCP_HOSTNAME}/mcp" \
 SESSION_ID=$(grep -i "mcp-session-id:" /tmp/mcp_headers | cut -d' ' -f2 | tr -d '\r')
 
 # Call risk_calculate_dti - should succeed
-curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "mcp-session-id: ${SESSION_ID}" \
@@ -159,7 +164,7 @@ RESTRICTED_TOKEN=$(curl -sk -X POST "${KEYCLOAK_ISSUER}/protocol/openid-connect/
   -d "grant_type=password&client_id=mcp-gateway&username=restricted&password=restricted&scope=openid groups roles" | jq -r '.access_token')
 
 # Initialize session with restricted token
-curl -s -D /tmp/mcp_headers_r -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -D /tmp/mcp_headers_r -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
@@ -167,7 +172,7 @@ curl -s -D /tmp/mcp_headers_r -X POST "http://${MCP_HOSTNAME}/mcp" \
 RESTRICTED_SESSION=$(grep -i "mcp-session-id:" /tmp/mcp_headers_r | cut -d' ' -f2 | tr -d '\r')
 
 # Try to call risk_calculate_dti - should be denied (403)
-curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
   -H "mcp-session-id: ${RESTRICTED_SESSION}" \
@@ -181,7 +186,7 @@ The restricted user should receive a `403 Forbidden` response because they do no
 [source,bash]
 ----
 # Call test1_greet - should succeed for restricted user
-curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
   -H "mcp-session-id: ${RESTRICTED_SESSION}" \

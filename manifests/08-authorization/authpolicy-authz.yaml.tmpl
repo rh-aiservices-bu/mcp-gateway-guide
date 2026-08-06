@@ -18,6 +18,7 @@ spec:
       "tool-access-check":
         when:
           - predicate: "request.headers.exists(h, h == 'x-mcp-toolname')"
+          - predicate: "request.headers['x-mcp-method'] == 'tools/call'"
         patternMatching:
           patterns:
             - predicate: |
@@ -27,6 +28,9 @@ spec:
         body:
           value: |
             {
-              "error": "Forbidden",
-              "message": "MCP Tool Access denied: Insufficient permissions for this tool."
+              "jsonrpc": "2.0",
+              "error": {
+                "code": -32600,
+                "message": "Forbidden: Insufficient permissions for this tool."
+              }
             }

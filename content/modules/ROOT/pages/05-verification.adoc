@@ -21,7 +21,7 @@ The MCP protocol uses a JSON-RPC session-based flow. To verify the gateway is wo
 [source,bash]
 ----
 export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
-export MCP_URL="http://${MCP_HOSTNAME}/mcp"
+export MCP_URL="https://${MCP_HOSTNAME}/mcp"
 echo "MCP endpoint: $MCP_URL"
 ----
 
@@ -31,7 +31,7 @@ Send an `initialize` request and capture the session ID from response headers:
 
 [source,bash]
 ----
-curl -s -D /tmp/mcp_headers -X POST "${MCP_URL}" \
+curl -sk -D /tmp/mcp_headers -X POST "${MCP_URL}" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -84,7 +84,7 @@ Use the session ID to list all tools aggregated by the gateway:
 
 [source,bash]
 ----
-curl -s -X POST "${MCP_URL}" \
+curl -sk -X POST "${MCP_URL}" \
   -H "Content-Type: application/json" \
   -H "mcp-session-id: ${SESSION_ID}" \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}' | jq '.result.tools[].name'
@@ -115,7 +115,7 @@ Call the risk server's DTI calculation tool with sample mortgage data:
 
 [source,bash]
 ----
-curl -s -X POST "${MCP_URL}" \
+curl -sk -X POST "${MCP_URL}" \
   -H "Content-Type: application/json" \
   -H "mcp-session-id: ${SESSION_ID}" \
   -d '{
@@ -177,7 +177,7 @@ If you have Node.js installed, you can use the official MCP Inspector for intera
 npx @modelcontextprotocol/inspector@latest
 ----
 
-Then connect to `http://\{MCP_HOSTNAME}/mcp` using the Streamable HTTP transport.
+Then connect to `https://\{MCP_HOSTNAME}/mcp` using the Streamable HTTP transport.
 
 == Troubleshooting
 
@@ -206,4 +206,4 @@ Then connect to `http://\{MCP_HOSTNAME}/mcp` using the Streamable HTTP transport
 
 == Next step
 
-Proceed to xref:06-deploy-keycloak.adoc[Phase 6: Deploy Keycloak] to add authentication and authorization.
+Proceed to xref:06-deploy-keycloak.adoc[Phase 6: Configure {rhbk}] to add authentication and authorization.

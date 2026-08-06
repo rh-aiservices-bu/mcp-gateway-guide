@@ -98,13 +98,13 @@ Initialize a session and list tools with the virtual server header:
 export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
 
 # Get token if auth is enabled
-export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
 TOKEN=$(curl -sk -X POST "${KEYCLOAK_URL}/realms/mcp/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password&client_id=mcp-gateway&username=mcp&password=mcp&scope=openid groups roles" | jq -r '.access_token')
 
 # Initialize session
-curl -s -D /tmp/mcp_headers -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -D /tmp/mcp_headers -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKEN}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}'
@@ -112,7 +112,7 @@ curl -s -D /tmp/mcp_headers -X POST "http://${MCP_HOSTNAME}/mcp" \
 SESSION_ID=$(grep -i "mcp-session-id:" /tmp/mcp_headers | cut -d' ' -f2 | tr -d '\r')
 
 # List tools filtered by the risk-analysis virtual server
-curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "mcp-session-id: ${SESSION_ID}" \
@@ -136,7 +136,7 @@ Expected output - only risk assessment tools:
 
 [source,bash]
 ----
-curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "mcp-session-id: ${SESSION_ID}" \
@@ -158,7 +158,7 @@ Without the header, all tools from all registered servers are returned:
 
 [source,bash]
 ----
-curl -s -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "mcp-session-id: ${SESSION_ID}" \

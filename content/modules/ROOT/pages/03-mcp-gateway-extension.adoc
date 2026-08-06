@@ -85,6 +85,7 @@ manifests/03-mcp-gateway-extension/
   kustomization.yaml
   mcpgatewayextension.yaml
   referencegrant.yaml
+  envoyfilter-accept-header.yaml   <-- Not included in kustomization, kept for reference
 ----
 
 == References

@@ -1,6 +1,6 @@
 = Phase 7: Authentication
 
-Configure OAuth 2.1 authentication for the {mcp-gw} using Kuadrant AuthPolicy and Keycloak.
+Configure OAuth 2.1 authentication for the {mcp-gw} using Kuadrant AuthPolicy and {rhbk}.
 
 TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
 
@@ -23,19 +23,19 @@ This phase configures:
 
 == Prerequisites
 
-* Keycloak deployed and running (xref:06-deploy-keycloak.adoc[Phase 6])
+* {rhbk} deployed and realm imported (xref:06-deploy-keycloak.adoc[Phase 6])
 * {rhcl} 1.4 includes Kuadrant and Authorino operators as dependencies
 
 == Installation
 
-=== Step 1: Get the Keycloak Issuer URL
+=== Step 1: Get the {rhbk} Issuer URL
 
 [source,bash]
 ----
-export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
 export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
 export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
-export MCP_URL="http://${MCP_HOSTNAME}/mcp"
+export MCP_URL="https://${MCP_HOSTNAME}/mcp"
 
 echo "Keycloak issuer: $KEYCLOAK_ISSUER"
 echo "MCP URL: $MCP_URL"
@@ -118,17 +118,16 @@ Wait for Kuadrant to be ready:
 oc wait kuadrant/kuadrant -n mcp-gateway --for=condition=Ready --timeout=120s
 ----
 
-==== Restart the Istio Gateway
+==== Restart the Gateway Deployment
 
-After Kuadrant installs its WASM plugin (`kuadrant-wasm-shim`), the Istio gateway deployment needs a restart. The WASM plugin is fetched from the `kuadrant-operator-wasm` service, which may not be available when the gateway first starts. If the plugin fails to load, the gateway will block all traffic (fail closed).
+After Kuadrant installs its WASM plugin (`kuadrant-wasm-shim`), the gateway deployment needs a restart. The WASM plugin is fetched from the `kuadrant-operator-wasm` service, which may not be available when the gateway first starts. If the plugin fails to load, the gateway will block all traffic (fail closed).
+
+With the `istio` GatewayClass, the gateway proxy deployment runs in the `mcp-gateway` namespace with the name `mcp-gateway-istio` (pattern: `<gateway-name>-<gatewayclass-name>`):
 
 [source,bash]
 ----
-ISTIO_DEPLOY=$(oc get deployment -n mcp-gateway \
-  -l istio.io/gateway-name=mcp-gateway \
-  -o jsonpath='{.items[0].metadata.name}')
-oc rollout restart deployment/${ISTIO_DEPLOY} -n mcp-gateway
-oc rollout status deployment/${ISTIO_DEPLOY} -n mcp-gateway --timeout=60s
+oc rollout restart deployment/mcp-gateway-istio -n mcp-gateway
+oc rollout status deployment/mcp-gateway-istio -n mcp-gateway --timeout=60s
 ----
 
 === Step 4: Create the AuthPolicy
@@ -143,7 +142,7 @@ envsubst < manifests/07-authentication/authpolicy-auth.yaml.tmpl | oc apply -f -
 This AuthPolicy:
 
 * Targets the Gateway's *public* `mcp` listener via `sectionName`
-* Validates JWT tokens against the Keycloak issuer
+* Validates JWT tokens against the {rhbk} issuer
 * Excludes `/.well-known` endpoints from authentication
 * Returns `401` with `WWW-Authenticate` header pointing to OAuth discovery
 
@@ -161,7 +160,7 @@ oc wait authpolicy/mcp-auth-policy -n mcp-gateway \
 
 [source,bash]
 ----
-curl -s "http://${MCP_HOSTNAME}/.well-known/oauth-protected-resource" | jq '.'
+curl -sk "https://${MCP_HOSTNAME}/.well-known/oauth-protected-resource" | jq '.'
 ----
 
 Expected response:
@@ -170,7 +169,7 @@ Expected response:
 ----
 {
   "resource_name": "MCP Gateway",
-  "resource": "http://mcp.<domain>/mcp",
+  "resource": "https://mcp.<domain>/mcp",
   "authorization_servers": [
     "https://sso.<domain>/realms/mcp"
   ],
@@ -183,7 +182,7 @@ Expected response:
 
 [source,bash]
 ----
-curl -sv "http://${MCP_HOSTNAME}/mcp" \
+curl -svk "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>&1 | grep -E "(HTTP/|WWW-Authenticate)"
 ----
@@ -204,7 +203,7 @@ TOKEN=$(curl -sk -X POST "${KEYCLOAK_ISSUER}/protocol/openid-connect/token" \
   -d "password=mcp" \
   -d "scope=openid groups roles" | jq -r '.access_token')
 
-curl -s -D /tmp/mcp_headers -X POST "http://${MCP_HOSTNAME}/mcp" \
+curl -sk -D /tmp/mcp_headers -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKEN}" \
   -d '{
@@ -230,7 +229,7 @@ Start the MCP Inspector and it will automatically handle the OAuth flow:
 npx @modelcontextprotocol/inspector@latest
 ----
 
-Connect to `http://\{MCP_HOSTNAME}/mcp` using Streamable HTTP transport. The Inspector will:
+Connect to `https://\{MCP_HOSTNAME}/mcp` using Streamable HTTP transport. The Inspector will:
 
 1. Detect the `401` and `WWW-Authenticate` header
 2. Fetch the protected resource metadata
@@ -238,7 +237,7 @@ Connect to `http://\{MCP_HOSTNAME}/mcp` using Streamable HTTP transport. The Ins
 4. Exchange the code for tokens
 5. Use the token for subsequent requests
 
-Login with `mcp` / `mcp` when redirected to Keycloak.
+Login with `mcp` / `mcp` when redirected to {rhbk}.
 
 == Appendix
 

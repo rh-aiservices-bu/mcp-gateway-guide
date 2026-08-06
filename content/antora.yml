@@ -12,4 +12,5 @@ asciidoc:
     rhcl: "Red Hat Connectivity Link"
     ocp-short: "OpenShift"
     mcp-gw: "MCP Gateway"
+    rhbk: "Red Hat Build of Keycloak"
     repo-url: "https://github.com/rh-aiservices-bu/mcp-gateway-guide"

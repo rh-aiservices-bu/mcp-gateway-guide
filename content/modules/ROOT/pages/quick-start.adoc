@@ -13,7 +13,7 @@ Installs the MCP Gateway operator, configures the Gateway, deploys two test MCP 
 
 == Full Installation with Auth (Phases 1-9)
 
-Adds Keycloak, authentication, authorization, and virtual MCP server configuration.
+Adds {rhbk}, authentication, authorization, and virtual MCP server configuration.
 
 [source,bash]
 ----
@@ -27,7 +27,7 @@ Adds Keycloak, authentication, authorization, and virtual MCP server configurati
 | Flag | Description
 
 | `--with-auth`
-| Include phases 6-9 (Keycloak, authentication, authorization, virtual servers)
+| Include phases 6-9 ({rhbk} realm, authentication, authorization, virtual servers)
 
 | `--from-phase N`
 | Resume from phase N (skips completed phases)

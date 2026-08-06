@@ -1,6 +1,6 @@
-= Phase 6: Deploy Keycloak
+= Phase 6: Configure {rhbk}
 
-Deploy Keycloak as the OAuth 2.1 authorization server for {mcp-gw} authentication and authorization.
+Deploy the {rhbk} ({rhbk}) as the OAuth 2.1 authorization server for {mcp-gw} authentication and authorization.
 
 TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
 
@@ -8,7 +8,7 @@ IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/
 
 == Overview
 
-Keycloak provides OIDC/OAuth 2.1 capabilities for the {mcp-gw}. The realm configuration includes:
+This phase deploys a dedicated {rhbk} instance in the `mcp-test` namespace using the RHBK operator, then imports the MCP realm via a `KeycloakRealmImport` CR. The realm configuration includes:
 
 * *MCP realm* - Dedicated realm for MCP Gateway authentication
 * *Public client* (`mcp-gateway`) - For CLI and browser-based OAuth flows with PKCE
@@ -36,59 +36,80 @@ Keycloak provides OIDC/OAuth 2.1 capabilities for the {mcp-gw}. The realm config
 
 Tool-level roles use the `tool:` prefix format (e.g., `tool:greet`, `tool:calculate_dti`). This matches the upstream MCP Gateway authorization convention where the authorization CEL expression prepends `tool:` to the tool name from the `x-mcp-toolname` header.
 
-=== Deployment Options
+== Prerequisites
 
-This guide provides two deployment approaches:
-
-* *Standalone Keycloak* - A Keycloak pod with ConfigMap-based realm import. Best for testing and clusters without the Red Hat Build of Keycloak (RHBK) operator.
-* *RHBK Operator* - Uses the `KeycloakRealmImport` CR to import the realm into an operator-managed Keycloak instance. Best for clusters that already have the RHBK operator installed.
-
-The realm configuration is identical in both approaches.
+* The `mcp-test` namespace must exist (created in Phase 4 when deploying MCP servers)
 
 == Installation
 
-=== Option A: Standalone Keycloak
+=== Step 1: Install the RHBK Operator
 
-This deploys Keycloak in dev mode with the MCP realm imported from a ConfigMap.
+Install the {rhbk} operator in the `mcp-test` namespace with OwnNamespace mode:
 
-==== Step 1: Deploy Keycloak
+[source,bash]
+----
+oc apply -k manifests/06-deploy-keycloak/operator/
+----
+
+Wait for the RHBK operator CSV to succeed:
+
+[source,bash]
+----
+oc wait csv -n mcp-test \
+  -l operators.coreos.com/rhbk-operator.mcp-test="" \
+  --for=jsonpath='{.status.phase}'=Succeeded --timeout=600s
+----
+
+TIP: The RHBK operator CSV can take 2-3 minutes to appear. If `oc wait` returns "no matching resources found", wait and retry.
+
+=== Step 2: Deploy RHBK with Realm Import
+
+Apply the kustomization which deploys PostgreSQL, the Keycloak CR, and the `KeycloakRealmImport` CR in the `mcp-test` namespace:
 
 [source,bash]
 ----
 oc apply -k manifests/06-deploy-keycloak/keycloak/
 ----
 
-==== Step 2: Wait for Keycloak to be Ready
+This creates:
+
+* A PostgreSQL database (`keycloak-pgsql`) for Keycloak storage
+* A `Keycloak` CR that the RHBK operator reconciles into a running instance
+* A `KeycloakRealmImport` CR that imports the `mcp` realm with users, clients, and roles
+
+=== Step 3: Wait for PostgreSQL
 
 [source,bash]
 ----
-oc wait pod -n keycloak -l app=keycloak \
+oc wait pod -n mcp-test -l app=keycloak-pgsql \
   --for=condition=Ready --timeout=120s
 ----
 
-=== Option B: RHBK Operator (KeycloakRealmImport)
-
-If your cluster already has the Red Hat Build of Keycloak operator managing a Keycloak instance, use the `KeycloakRealmImport` CR to import the MCP realm.
-
-==== Step 1: Apply the KeycloakRealmImport CR
+=== Step 4: Wait for Keycloak to be Ready
 
 [source,bash]
 ----
-oc apply -f manifests/06-deploy-keycloak/keycloak/keycloakrealmimport-mcp.yaml
+oc wait keycloak/keycloak -n mcp-test \
+  --for=condition=Ready --timeout=300s
 ----
 
-The CR references the operator-managed Keycloak via `keycloakCRName: keycloak`. Adjust this if your Keycloak CR has a different name.
+The RHBK operator provisions a StatefulSet, Services, and a Route for the Keycloak instance. This may take a few minutes on the first deployment.
 
-==== Step 2: Verify the Import
+=== Step 5: Verify the Realm Import
 
 [source,bash]
 ----
-oc get keycloakrealmimport -n keycloak
+oc get keycloakrealmimport -n mcp-test
 ----
 
-The import should show as completed. Check the Keycloak operator logs if the import fails.
+The import should show as completed. If the import has errors, check the RHBK operator logs:
 
-NOTE: If you need to re-import the realm (e.g., after role changes), you must delete the existing realm first via the Keycloak admin API: `curl -sk -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" "$\{KEYCLOAK_URL\}/admin/realms/mcp"`, then re-apply the CR.
+[source,bash]
+----
+oc logs deployment/rhbk-operator -n mcp-test --tail=30
+----
+
+NOTE: If you need to re-import the realm (e.g., after role changes), you must delete the existing realm first via the Keycloak admin API: `curl -sk -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" "$\{KEYCLOAK_URL\}/admin/realms/mcp"`, then delete and re-apply the `KeycloakRealmImport` CR.
 
 == Verification
 
@@ -96,7 +117,7 @@ NOTE: If you need to re-import the realm (e.g., after role changes), you must de
 
 [source,bash]
 ----
-export KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
 echo "Keycloak URL: $KEYCLOAK_URL"
 ----
 
@@ -118,7 +139,13 @@ Open the Keycloak admin console in your browser:
 echo "Admin console: ${KEYCLOAK_URL}/admin"
 ----
 
-For standalone deployments, the admin credentials are `admin/admin`. For RHBK operator deployments, check the `keycloak-initial-admin` secret in the keycloak namespace.
+The admin credentials are stored in the `keycloak-initial-admin` secret:
+
+[source,bash]
+----
+oc get secret keycloak-initial-admin -n mcp-test -o jsonpath='{.data.username}' | base64 -d && echo
+oc get secret keycloak-initial-admin -n mcp-test -o jsonpath='{.data.password}' | base64 -d && echo
+----
 
 Navigate to the `mcp` realm to verify:
 
@@ -172,19 +199,17 @@ NOTE: The token scope should be `openid groups roles`. Do not include `profile` 
 [source]
 ----
 manifests/06-deploy-keycloak/
+  operator/
+    kustomization.yaml
+    operatorgroup.yaml               <-- OwnNamespace in mcp-test
+    subscription.yaml                <-- RHBK operator subscription
   keycloak/
     kustomization.yaml
-    namespace.yaml
-    deployment.yaml
-    service.yaml
-    route.yaml
-    realm-configmap.yaml           <-- Standalone Keycloak realm
-    keycloakrealmimport-mcp.yaml   <-- RHBK operator realm import
+    keycloak-db-secret.yaml          <-- PostgreSQL credentials
+    keycloak-postgresql.yaml         <-- PostgreSQL Deployment + Service
+    keycloak.yaml                    <-- RHBK Keycloak CR
+    keycloakrealmimport-mcp.yaml     <-- RHBK realm import CR
 ----
-
-=== KC_HOSTNAME Configuration
-
-The Keycloak deployment sets `KC_HOSTNAME` to the in-cluster service DNS (`keycloak.keycloak.svc.cluster.local`). This ensures the `issuer` claim in JWT tokens matches what Authorino uses for OIDC discovery from inside the cluster. The Route provides external access via edge TLS termination.
 
 === clientScopeMappings
 
@@ -192,9 +217,8 @@ The realm includes `clientScopeMappings` that allow the `mcp-gateway` public cli
 
 == References
 
-* link:https://www.keycloak.org/documentation[Keycloak Documentation]
+* link:https://docs.redhat.com/en/documentation/red_hat_build_of_keycloak/26.0/html/operator_guide/[{rhbk} Operator Guide]
 * link:https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/authentication/[Upstream: Authentication Configuration]
-* link:https://docs.redhat.com/en/documentation/red_hat_build_of_keycloak/26.0/html/operator_guide/[RHBK Operator Guide]
 
 == Next step
 

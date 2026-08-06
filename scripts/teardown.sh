@@ -77,9 +77,12 @@ oc delete gateway mcp-gateway -n "$MCP_NS" --ignore-not-found 2>/dev/null || tru
 log_step "Deleting mcp-test namespace"
 oc delete namespace mcp-test --ignore-not-found 2>/dev/null || true
 
-# Delete Keycloak namespace
-log_step "Deleting keycloak namespace"
-oc delete namespace keycloak --ignore-not-found 2>/dev/null || true
+# Delete RHBK resources in mcp-test (namespace deletion below handles cleanup)
+log_step "Deleting RHBK Keycloak resources in mcp-test"
+oc delete keycloakrealmimport --all -n mcp-test --ignore-not-found 2>/dev/null || true
+oc delete keycloak --all -n mcp-test --ignore-not-found 2>/dev/null || true
+oc delete deployment keycloak-pgsql -n mcp-test --ignore-not-found 2>/dev/null || true
+oc delete secret keycloak-db-secret -n mcp-test --ignore-not-found 2>/dev/null || true
 
 # Delete mcp-system namespace (virtual server config)
 log_step "Deleting mcp-system namespace"

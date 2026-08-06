@@ -20,7 +20,7 @@ fi
 
 CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')
 MCP_HOSTNAME="mcp.${CLUSTER_DOMAIN}"
-MCP_URL="http://${MCP_HOSTNAME}/mcp"
+MCP_URL="https://${MCP_HOSTNAME}/mcp"
 HEADER_FILE=$(mktemp /tmp/mcp_headers.XXXXXX)
 AUTH_ENABLED=false
 TOKEN=""
@@ -44,7 +44,7 @@ log_step "Step 1: Initialize MCP Session"
 
 AUTH_HEADER=""
 if [[ "$AUTH_ENABLED" == "true" ]]; then
-    KEYCLOAK_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+    KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
     KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
     log_info "Getting token from $KEYCLOAK_ISSUER"
 
@@ -60,8 +60,9 @@ if [[ "$AUTH_ENABLED" == "true" ]]; then
     AUTH_HEADER="-H \"Authorization: Bearer ${TOKEN}\""
 fi
 
-INIT_RESPONSE=$(curl -s -D "$HEADER_FILE" -X POST "$MCP_URL" \
+INIT_RESPONSE=$(curl -sk -D "$HEADER_FILE" -X POST "$MCP_URL" \
     -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" \
     ${AUTH_ENABLED:+-H "Authorization: Bearer ${TOKEN}"} \
     -d '{
         "jsonrpc": "2.0",
@@ -97,8 +98,9 @@ log_ok "Session ID: $SESSION_ID"
 # Step 3: List tools
 log_step "Step 3: List Available Tools"
 
-TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL" \
+TOOLS_RESPONSE=$(curl -sk -X POST "$MCP_URL" \
     -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" \
     -H "mcp-session-id: ${SESSION_ID}" \
     ${AUTH_ENABLED:+-H "Authorization: Bearer ${TOKEN}"} \
     -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}')
@@ -129,8 +131,9 @@ done
 # Step 5: Test tool call
 log_step "Step 5: Test Tool Call (risk_calculate_dti)"
 
-CALL_RESPONSE=$(curl -s -X POST "$MCP_URL" \
+CALL_RESPONSE=$(curl -sk -X POST "$MCP_URL" \
     -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" \
     -H "mcp-session-id: ${SESSION_ID}" \
     ${AUTH_ENABLED:+-H "Authorization: Bearer ${TOKEN}"} \
     -d '{
@@ -146,7 +149,7 @@ CALL_RESPONSE=$(curl -s -X POST "$MCP_URL" \
         }
     }')
 
-CALL_JSON=$(echo "$CALL_RESPONSE" | grep '^data: ' | head -1 | sed 's/^data: //')
+CALL_JSON=$(echo "$CALL_RESPONSE" | grep '^data: ' | head -1 | sed 's/^data: //' || true)
 if [[ -z "$CALL_JSON" ]]; then
     CALL_JSON="$CALL_RESPONSE"
 fi
@@ -164,7 +167,7 @@ if [[ "$AUTH_ENABLED" == "true" ]]; then
     log_step "Step 6: Auth-Specific Checks"
 
     # Check OAuth discovery
-    OAUTH_DISCOVERY=$(curl -s "http://${MCP_HOSTNAME}/.well-known/oauth-protected-resource")
+    OAUTH_DISCOVERY=$(curl -sk "https://${MCP_HOSTNAME}/.well-known/oauth-protected-resource")
     if echo "$OAUTH_DISCOVERY" | jq -e '.authorization_servers' > /dev/null 2>&1; then
         log_ok "OAuth discovery endpoint working"
     else
@@ -172,13 +175,53 @@ if [[ "$AUTH_ENABLED" == "true" ]]; then
     fi
 
     # Check 401 without token
-    UNAUTH_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$MCP_URL" \
+    UNAUTH_CODE=$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$MCP_URL" \
         -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
     if [[ "$UNAUTH_CODE" == "401" ]]; then
         log_ok "Unauthenticated request correctly returns 401"
     else
         log_warn "Unauthenticated request returned $UNAUTH_CODE (expected 401)"
+    fi
+
+    # Check restricted user authz (403 for denied tools)
+    KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}' 2>/dev/null || oc get route -n mcp-test -o jsonpath='{.items[0].spec.host}' 2>/dev/null)"
+    if [[ -n "$KEYCLOAK_URL" ]] && [[ "$KEYCLOAK_URL" != "https://" ]]; then
+        RESTRICTED_TOKEN=$(curl -sk "${KEYCLOAK_URL}/realms/mcp/protocol/openid-connect/token" \
+            -d "grant_type=password&client_id=mcp-gateway&username=restricted&password=restricted" | jq -r '.access_token' 2>/dev/null)
+        if [[ -n "$RESTRICTED_TOKEN" ]] && [[ "$RESTRICTED_TOKEN" != "null" ]]; then
+            R_SID=$(curl -vsk "$MCP_URL" \
+                -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -H "Accept: application/json, text/event-stream" \
+                -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"verify","version":"1.0"}}}' 2>&1 | grep -i 'mcp-session-id' | head -1 | sed 's/.*: //' | tr -d '\r')
+            if [[ -n "$R_SID" ]]; then
+                curl -sk "$MCP_URL" \
+                    -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
+                    -H "Content-Type: application/json" \
+                    -H "Accept: application/json, text/event-stream" \
+                    -H "Mcp-Session-Id: ${R_SID}" \
+                    -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' > /dev/null 2>&1
+                AUTHZ_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 "$MCP_URL" \
+                    -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
+                    -H "Content-Type: application/json" \
+                    -H "Accept: application/json, text/event-stream" \
+                    -H "Mcp-Session-Id: ${R_SID}" \
+                    -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"risk_calculate_dti","arguments":{"monthly_debts":1500,"monthly_income":5000}}}')
+                if [[ "$AUTHZ_CODE" == "403" ]]; then
+                    log_ok "Restricted user correctly denied with 403 for risk tools"
+                else
+                    log_warn "Restricted user got $AUTHZ_CODE for denied tool (expected 403)"
+                fi
+            else
+                log_warn "Could not initialize session for restricted user"
+            fi
+        else
+            log_warn "Could not get restricted user token"
+        fi
+    else
+        log_warn "Keycloak route not found, skipping authz check"
     fi
 fi
 
