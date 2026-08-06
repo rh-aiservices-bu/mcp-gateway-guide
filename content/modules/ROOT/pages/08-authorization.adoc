@@ -150,7 +150,8 @@ curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "mcp-session-id: ${SESSION_ID}" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"risk_calculate_dti","arguments":{"monthly_income":8000,"monthly_debts":2400}}}' | jq '.'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"risk_calculate_dti","arguments":{"monthly_income":8000,"monthly_debts":2400}}}' \
+  | grep '^data: ' | sed 's/^data: //' | jq '.'
 ----
 
 === Test with Restricted User
@@ -176,7 +177,8 @@ curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
   -H "mcp-session-id: ${RESTRICTED_SESSION}" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"risk_calculate_dti","arguments":{"monthly_income":8000,"monthly_debts":2400}}}' | jq '.'
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"risk_calculate_dti","arguments":{"monthly_income":8000,"monthly_debts":2400}}}' \
+  | grep '^data: ' | sed 's/^data: //' | jq '.'
 ----
 
 The restricted user should receive a `403 Forbidden` response because they do not have `tool:calculate_dti` role on the risk server.
@@ -190,7 +192,8 @@ curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${RESTRICTED_TOKEN}" \
   -H "mcp-session-id: ${RESTRICTED_SESSION}" \
-  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"test1_greet","arguments":{}}}' | jq '.'
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"test1_greet","arguments":{}}}' \
+  | grep '^data: ' | sed 's/^data: //' | jq '.'
 ----
 
 This should succeed because the restricted user has `tool:greet` role on `mcp-test/test-server1`.

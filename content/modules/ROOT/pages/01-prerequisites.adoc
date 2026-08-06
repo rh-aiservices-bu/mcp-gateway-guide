@@ -136,6 +136,13 @@ manifests/01-prerequisites/
     istio.yaml               <-- Istio + IstioCNI control plane
 ----
 
+== Related Issues
+
+Issues filed against the official RHCL 1.4 docs based on E2E testing on fresh OCP 4.21 clusters:
+
+* link:https://issues.redhat.com/browse/CONNLINK-1497[CONNLINK-1497] - OperatorGroup with OwnNamespace mode fails for MCP Gateway dependency operators. This guide uses AllNamespaces mode (`spec: {}`) as a workaround.
+* link:https://issues.redhat.com/browse/CONNLINK-1501[CONNLINK-1501] - Section 1.1 missing OSSM3 / Gateway API provider as prerequisite. This guide includes OSSM3 installation as Step 1.
+
 == References
 
 * link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#installing-the-mcp-gateway-operator_mcp-gateway-install[Installing the MCP Gateway Operator]

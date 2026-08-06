@@ -63,22 +63,24 @@ This creates an edge-TLS Route that bridges external traffic from the default HA
 
 == Verification
 
-=== Wait for Gateway to be Programmed
+=== Wait for Gateway to be Accepted
 
 [source,bash]
 ----
 oc wait gateway/mcp-gateway -n mcp-gateway \
-  --for=condition=Programmed --timeout=120s
+  --for=condition=Accepted --timeout=120s
 ----
 
-=== Check Gateway Status
+NOTE: The top-level `Programmed` condition may show `False` with `AddressNotAssigned` because the `istio` GatewayClass creates a LoadBalancer service that stays `<pending>` without MetalLB. This is expected - the OpenShift Route bypasses the LoadBalancer. Check the individual listener conditions instead, which should show `Programmed: True`.
+
+=== Check Gateway Proxy Pod
 
 [source,bash]
 ----
-oc describe gateway mcp-gateway -n mcp-gateway
+oc get pods -n mcp-gateway -l gateway.networking.k8s.io/gateway-name=mcp-gateway
 ----
 
-Look for the `Programmed` condition set to `True` and listener statuses showing `Attached`.
+The gateway proxy pod (`mcp-gateway-istio-*`) should be `Running` and `Ready`.
 
 === Verify the Route is Created
 
@@ -105,6 +107,10 @@ manifests/02-gateway-setup/
   gateway.yaml.tmpl
   route.yaml.tmpl            <-- OpenShift Route for external access
 ----
+
+== Related Issues
+
+* link:https://issues.redhat.com/browse/CONNLINK-1502[CONNLINK-1502] - DNS Management section missing OpenShift Route as alternative to MetalLB for bare-metal. This guide uses an OpenShift Route for external access instead of MetalLB.
 
 == References
 

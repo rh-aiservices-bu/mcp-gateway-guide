@@ -16,6 +16,3 @@ __pycache__/
 
 # Serena
 .serena/
-
-# Claude Code
-.claude/

@@ -76,31 +76,16 @@ A template version of the full MCPGatewayExtension manifest with OAuth is availa
 
 Before AuthPolicy resources can be enforced, Kuadrant needs to be properly configured.
 
-==== Ensure OperatorGroup Supports AllNamespaces Mode
+==== Verify OperatorGroup is AllNamespaces Mode
 
-The Authorino operator (installed as a dependency of the MCP Gateway operator) requires the OperatorGroup to be in AllNamespaces mode. If the OperatorGroup has `spec.targetNamespaces` set, the Authorino CSV will fail with `UnsupportedOperatorGroup`.
-
-Check the current OperatorGroup:
+The Authorino operator (installed as a dependency of the MCP Gateway operator) requires the OperatorGroup to be in AllNamespaces mode. If you followed Phase 1, the OperatorGroup was already created with `spec: {}` (AllNamespaces). Verify:
 
 [source,bash]
 ----
-oc get operatorgroup -n mcp-gateway -o yaml
+oc get operatorgroup -n mcp-gateway -o jsonpath='{.items[0].spec}'
 ----
 
-If `spec.targetNamespaces` is set (OwnNamespace mode), delete and recreate it without targetNamespaces:
-
-[source,bash]
-----
-oc delete operatorgroup <name> -n mcp-gateway
-cat <<EOF | oc apply -f -
-apiVersion: operators.coreos.com/v1
-kind: OperatorGroup
-metadata:
-  name: mcp-gateway-og
-  namespace: mcp-gateway
-spec: {}
-EOF
-----
+This should return `{}` (empty, meaning AllNamespaces). If it shows `targetNamespaces`, re-apply the Phase 1 manifests: `oc apply -k manifests/01-prerequisites/operators/`.
 
 ==== Create the Kuadrant CR
 
@@ -205,6 +190,7 @@ TOKEN=$(curl -sk -X POST "${KEYCLOAK_ISSUER}/protocol/openid-connect/token" \
 
 curl -sk -D /tmp/mcp_headers -X POST "https://${MCP_HOSTNAME}/mcp" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "jsonrpc": "2.0",

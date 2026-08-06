@@ -33,6 +33,7 @@ Send an `initialize` request and capture the session ID from response headers:
 ----
 curl -sk -D /tmp/mcp_headers -X POST "${MCP_URL}" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{
     "jsonrpc": "2.0",
     "id": 1,
@@ -61,8 +62,8 @@ You should see a JSON response with the server capabilities:
       "tools": { "listChanged": true }
     },
     "serverInfo": {
-      "name": "mcp-gateway-broker",
-      "version": "..."
+      "name": "Kuadrant MCP Gateway",
+      "version": "0.0.1"
     }
   }
 }
@@ -86,6 +87,7 @@ Use the session ID to list all tools aggregated by the gateway:
 ----
 curl -sk -X POST "${MCP_URL}" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -H "mcp-session-id: ${SESSION_ID}" \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}' | jq '.result.tools[].name'
 ----
@@ -117,6 +119,7 @@ Call the risk server's DTI calculation tool with sample mortgage data:
 ----
 curl -sk -X POST "${MCP_URL}" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -H "mcp-session-id: ${SESSION_ID}" \
   -d '{
     "jsonrpc": "2.0",
@@ -129,8 +132,10 @@ curl -sk -X POST "${MCP_URL}" \
         "monthly_debts": 2400
       }
     }
-  }' | jq '.'
+  }' | grep '^data: ' | sed 's/^data: //' | jq '.'
 ----
+
+NOTE: The `tools/call` response uses Server-Sent Events (SSE) format with `content-type: text/event-stream`. The JSON payload is in the `data:` field, so you need to extract it with `grep '^data: '` before piping to `jq`.
 
 Expected response with DTI calculation:
 
@@ -197,6 +202,10 @@ Then connect to `https://\{MCP_HOSTNAME}/mcp` using the Streamable HTTP transpor
 
 * Make sure you are using `-D` flag to dump headers
 * Check the response for errors in the initialize call
+
+== Related Issues
+
+* link:https://issues.redhat.com/browse/CONNLINK-1499[CONNLINK-1499] - Verification curl in official docs missing required Accept header. This guide includes `Accept: application/json, text/event-stream` in all curl commands.
 
 == References
 

@@ -48,8 +48,8 @@ Each phase has step-by-step instructions, status gates, and troubleshooting.
 | Phase | Description | Time
 
 | xref:01-prerequisites.adoc[1. Prerequisites]
-| MCP Gateway operator subscription via OLM
-| 5 min
+| OSSM3, Istio control plane, and MCP Gateway operator via OLM
+| 10 min
 
 | xref:02-gateway-setup.adoc[2. Gateway Setup]
 | Gateway object with MCP and mcps listeners

@@ -77,11 +77,21 @@ oc apply -f manifests/04-register-mcp-servers/mcpsr-test.yaml
 oc apply -f manifests/04-register-mcp-servers/mcpsr-risk.yaml
 ----
 
+=== Step 5: Restart the Broker
+
+The broker reads server configuration from the `mcp-gateway-config` secret at startup. After the controller writes new server registrations, the broker needs a restart to load them:
+
+[source,bash]
+----
+oc rollout restart deployment/mcp-gateway -n mcp-gateway
+oc rollout status deployment/mcp-gateway -n mcp-gateway --timeout=60s
+----
+
 == Verification
 
 === Check MCPServerRegistration Status
 
-All registrations should show `Ready`:
+After the broker restart, all registrations should show `Ready` with tool counts:
 
 [source,bash]
 ----
@@ -92,10 +102,12 @@ Expected output:
 
 [source]
 ----
-NAMESPACE   NAME               READY
-mcp-test    test-server1       True
-mcp-test    risk-server        True
+NAMESPACE   NAME           PREFIX   TARGET               READY   TOOLS
+mcp-test    test-server1   test1_   test-server1-route   True    5
+mcp-test    risk-server    risk_    risk-server-route    True    6
 ----
+
+NOTE: If registrations show `Ready: False` with `TOOLS: 0`, the broker has not yet validated the backend servers. Wait a few seconds and check again - the broker validates servers periodically after restart.
 
 === Check Controller Logs
 
@@ -108,10 +120,10 @@ oc logs -n mcp-gateway deployment/mcp-gateway-controller --tail=20
 
 [source,bash]
 ----
-oc logs -n mcp-gateway deployment/mcp-gateway --tail=30 | grep -i "tool"
+oc logs -n mcp-gateway deployment/mcp-gateway --tail=30 | grep -i "tool\|server"
 ----
 
-You should see log lines indicating tools were discovered from each registered server.
+You should see `Server validation completed` with `healthyServers=2`.
 
 == About the MCP Servers
 
