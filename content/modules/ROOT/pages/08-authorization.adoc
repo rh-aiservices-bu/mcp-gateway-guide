@@ -75,6 +75,8 @@ The broker sets `x-mcp-toolname` on all requests to backend servers, including d
 
 == Installation
 
+TIP: For a detailed explanation of the AuthPolicy, the CEL expression, and the two-policy architecture, see the link:{repo-url}/tree/main/manifests/08-authorization[manifests/08-authorization README].
+
 === Step 1: Apply the Authorization Policy
 
 [source,bash]
