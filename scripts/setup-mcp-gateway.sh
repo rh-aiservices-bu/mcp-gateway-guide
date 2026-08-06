@@ -195,7 +195,7 @@ phase_4() {
 
     log_step "Waiting for MCPServerRegistrations to become Ready..."
     for i in {1..20}; do
-        READY_COUNT=$(oc get mcpsr -A -o jsonpath='{range .items[*]}{.status.ready}{"\n"}{end}' 2>/dev/null | grep -c "true" || echo "0")
+        READY_COUNT=$(oc get mcpsr -A -o jsonpath='{range .items[*]}{.status.ready}{"\n"}{end}' 2>/dev/null | grep -c "true" || true)
         if [[ "$READY_COUNT" -ge 2 ]]; then
             log_ok "All MCPServerRegistrations ready ($READY_COUNT)"
             break
