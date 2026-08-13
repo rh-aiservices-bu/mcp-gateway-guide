@@ -140,8 +140,8 @@ manifests/01-prerequisites/
 
 Issues filed against the official RHCL 1.4 docs based on E2E testing on fresh OCP 4.21 clusters:
 
-* link:https://issues.redhat.com/browse/CONNLINK-1497[CONNLINK-1497] - OperatorGroup with OwnNamespace mode fails for MCP Gateway dependency operators. This guide uses AllNamespaces mode (`spec: {}`) as a workaround.
-* link:https://issues.redhat.com/browse/CONNLINK-1501[CONNLINK-1501] - Section 1.1 missing OSSM3 / Gateway API provider as prerequisite. This guide includes OSSM3 installation as Step 1.
+* link:https://issues.redhat.com/browse/OSDOCS-21434[OSDOCS-21434] (was link:https://issues.redhat.com/browse/CONNLINK-1497[CONNLINK-1497]) - OperatorGroup with OwnNamespace mode fails for MCP Gateway dependency operators. This guide uses AllNamespaces mode (`spec: {}`) as a workaround.
+* link:https://issues.redhat.com/browse/OSDOCS-21438[OSDOCS-21438] (was link:https://issues.redhat.com/browse/CONNLINK-1501[CONNLINK-1501]) - Section 1.1 missing OSSM3 / Gateway API provider as prerequisite. This guide includes OSSM3 installation as Step 1.
 
 == References
 

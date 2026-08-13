@@ -110,7 +110,7 @@ manifests/02-gateway-setup/
 
 == Related Issues
 
-* link:https://issues.redhat.com/browse/CONNLINK-1502[CONNLINK-1502] - DNS Management section missing OpenShift Route as alternative to MetalLB for bare-metal. This guide uses an OpenShift Route for external access instead of MetalLB.
+* link:https://issues.redhat.com/browse/OSDOCS-21439[OSDOCS-21439] (was link:https://issues.redhat.com/browse/CONNLINK-1502[CONNLINK-1502]) - DNS Management section missing OpenShift Route as alternative to MetalLB for bare-metal. This guide uses an OpenShift Route for external access instead of MetalLB.
 
 == References
 

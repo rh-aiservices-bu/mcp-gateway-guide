@@ -90,8 +90,8 @@ manifests/03-mcp-gateway-extension/
 
 == Related Issues
 
-* link:https://issues.redhat.com/browse/CONNLINK-1498[CONNLINK-1498] - privateHost default assumes Istio GatewayClass but docs use openshift-default. This guide uses `gatewayClassName: istio` where the default privateHost works correctly.
-* link:https://issues.redhat.com/browse/CONNLINK-1500[CONNLINK-1500] - Auto-generated HTTPRoute example shows wrong namespace in parentRefs. This guide creates HTTPRoutes with the correct gateway namespace.
+* link:https://issues.redhat.com/browse/OSDOCS-21435[OSDOCS-21435] (was link:https://issues.redhat.com/browse/CONNLINK-1498[CONNLINK-1498]) - privateHost default assumes Istio GatewayClass but docs use openshift-default. This guide uses `gatewayClassName: istio` where the default privateHost works correctly.
+* link:https://issues.redhat.com/browse/OSDOCS-21437[OSDOCS-21437] (was link:https://issues.redhat.com/browse/CONNLINK-1500[CONNLINK-1500]) - Auto-generated HTTPRoute example shows wrong namespace in parentRefs. This guide creates HTTPRoutes with the correct gateway namespace.
 
 == References
 
