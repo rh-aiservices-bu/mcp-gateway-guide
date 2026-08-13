@@ -205,7 +205,7 @@ Then connect to `https://\{MCP_HOSTNAME}/mcp` using the Streamable HTTP transpor
 
 == Related Issues
 
-* link:https://issues.redhat.com/browse/CONNLINK-1499[CONNLINK-1499] - Verification curl in official docs missing required Accept header. This guide includes `Accept: application/json, text/event-stream` in all curl commands.
+* link:https://issues.redhat.com/browse/OSDOCS-21436[OSDOCS-21436] (was link:https://issues.redhat.com/browse/CONNLINK-1499[CONNLINK-1499]) - Verification curl in official docs missing required Accept header. This guide includes `Accept: application/json, text/event-stream` in all curl commands.
 
 == References
 
