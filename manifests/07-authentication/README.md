@@ -155,7 +155,7 @@ spec:
   - applyTo: CLUSTER
     match:
       cluster:
-        service: authorino-authorino-authorization.kuadrant-system.svc.cluster.local
+        service: authorino-authorino-authorization.mcp-gateway.svc.cluster.local
     patch:
       operation: ADD
       value:
@@ -171,7 +171,7 @@ spec:
             - endpoint:
                 address:
                   socket_address:
-                    address: authorino-authorino-authorization.kuadrant-system.svc.cluster.local
+                    address: authorino-authorino-authorization.mcp-gateway.svc.cluster.local
                     port_value: 50051
         transport_socket:
           name: envoy.transport_sockets.tls
@@ -198,7 +198,7 @@ By default, the Kuadrant WASM plugin in the gateway proxy connects to Authorino'
 This EnvoyFilter patches the Envoy cluster configuration for the Authorino service to add TLS:
 
 - **`applyTo: CLUSTER`** - Patches at the Envoy cluster level (upstream connection config)
-- **`match`** - Targets the cluster for `authorino-authorino-authorization.kuadrant-system.svc.cluster.local`
+- **`match`** - Targets the cluster for `authorino-authorino-authorization.mcp-gateway.svc.cluster.local`
 - **`transport_socket`** - Adds TLS context using the OpenShift service CA certificate (`/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt`) to validate Authorino's TLS certificate
 - **`http2_protocol_options`** - Required because gRPC runs over HTTP/2
 - **`priority: -1`** - Ensures this filter is applied before others

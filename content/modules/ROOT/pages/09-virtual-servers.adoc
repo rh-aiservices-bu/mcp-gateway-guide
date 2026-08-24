@@ -59,9 +59,37 @@ oc logs deployment/mcp-gateway-controller -n mcp-gateway --tail=10 | grep -i "vi
 
 You should see `reconciling mcpvirtualserver` messages without errors.
 
-=== Step 3: Restart the Broker
+=== Step 3: Merge Virtual Server Config into the Broker
 
-The broker needs a restart to load the virtual server configuration:
+The MCPVirtualServer controller writes virtual server definitions to a config secret in the `mcp-system` namespace, but the broker reads its config from a secret in the `mcp-gateway` namespace. You need to merge the virtual server entries into the broker's config secret so the broker can find them.
+
+[source,bash]
+----
+# Read the virtual server config from mcp-system
+VS_YAML=$(oc get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d)
+
+# Read the current broker config from mcp-gateway
+BROKER_YAML=$(oc get secret mcp-gateway-config -n mcp-gateway -o jsonpath='{.data.config\.yaml}' | base64 -d)
+
+# Merge virtual servers into the broker config
+MERGED_B64=$(python3 -c "
+import yaml, sys, base64
+broker = yaml.safe_load('''${BROKER_YAML}''')
+vs = yaml.safe_load('''${VS_YAML}''')
+broker['virtualServers'] = vs.get('virtualServers', [])
+print(base64.b64encode(yaml.dump(broker, default_flow_style=False).encode()).decode())
+")
+
+# Patch the broker config secret
+oc patch secret mcp-gateway-config -n mcp-gateway --type='json' \
+    -p="[{\"op\":\"replace\",\"path\":\"/data/config.yaml\",\"value\":\"${MERGED_B64}\"}]"
+----
+
+NOTE: Without this merge step, the broker will log `failed to get virtual server ... not found` because it only reads from `mcp-gateway/mcp-gateway-config`, not from `mcp-system/mcp-gateway-config`.
+
+=== Step 4: Restart the Broker
+
+The broker needs a restart to load the merged configuration:
 
 [source,bash]
 ----
@@ -180,10 +208,15 @@ The result is the *intersection* of both filters. For example, if the `risk-anal
 
 If the broker logs show `failed to get virtual server ... not found`:
 
+This usually means the virtual server definitions were not merged into the broker's config secret. The controller writes to `mcp-system/mcp-gateway-config` but the broker reads from `mcp-gateway/mcp-gateway-config`. Run Step 3 (merge) from the Installation section above.
+
+If the merge was already done:
+
 1. Check that the `mcp-system` namespace exists
 2. Check the controller logs for reconciliation errors: `oc logs deployment/mcp-gateway-controller -n mcp-gateway | grep virtual`
 3. Verify the config secret exists: `oc get secret mcp-gateway-config -n mcp-system`
-4. Restart the broker after the config is written
+4. Verify the broker's config has `virtualServers`: `oc get secret mcp-gateway-config -n mcp-gateway -o jsonpath='{.data.config\.yaml}' | base64 -d`
+5. Restart the broker after the config is written
 
 === Virtual Server Header Format
 

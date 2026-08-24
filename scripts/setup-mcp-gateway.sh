@@ -359,6 +359,24 @@ phase_9() {
     log_step "Waiting for virtual server reconciliation..."
     run "sleep 10"
 
+    log_step "Merging virtual server config into broker config secret"
+    if oc get secret mcp-gateway-config -n mcp-system &>/dev/null; then
+        VS_YAML=$(oc get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d)
+        BROKER_YAML=$(oc get secret mcp-gateway-config -n ${MCP_NS} -o jsonpath='{.data.config\.yaml}' | base64 -d)
+        MERGED_B64=$(python3 -c "
+import yaml, sys, base64
+broker = yaml.safe_load('''${BROKER_YAML}''')
+vs = yaml.safe_load('''${VS_YAML}''')
+broker['virtualServers'] = vs.get('virtualServers', [])
+print(base64.b64encode(yaml.dump(broker, default_flow_style=False).encode()).decode())
+")
+        oc patch secret mcp-gateway-config -n ${MCP_NS} --type='json' \
+            -p="[{\"op\":\"replace\",\"path\":\"/data/config.yaml\",\"value\":\"${MERGED_B64}\"}]"
+        log_ok "Virtual server config merged into broker config"
+    else
+        log_warn "Virtual server config secret not found in mcp-system, skipping merge"
+    fi
+
     log_step "Restarting broker to load virtual server config"
     run "oc rollout restart deployment/mcp-gateway -n ${MCP_NS}"
     run "oc rollout status deployment/mcp-gateway -n ${MCP_NS} --timeout=60s"

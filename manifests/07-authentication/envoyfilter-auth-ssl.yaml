@@ -9,7 +9,7 @@ spec:
   - applyTo: CLUSTER
     match:
       cluster:
-        service: authorino-authorino-authorization.kuadrant-system.svc.cluster.local
+        service: authorino-authorino-authorization.mcp-gateway.svc.cluster.local
     patch:
       operation: ADD
       value:
@@ -25,7 +25,7 @@ spec:
             - endpoint:
                 address:
                   socket_address:
-                    address: authorino-authorino-authorization.kuadrant-system.svc.cluster.local
+                    address: authorino-authorino-authorization.mcp-gateway.svc.cluster.local
                     port_value: 50051
         transport_socket:
           name: envoy.transport_sockets.tls
