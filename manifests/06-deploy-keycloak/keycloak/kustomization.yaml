@@ -3,5 +3,6 @@ kind: Kustomization
 resources:
   - keycloak-db-secret.yaml
   - keycloak-postgresql.yaml
+  - keycloak-route.yaml
   - keycloak.yaml
   - keycloakrealmimport-mcp.yaml
