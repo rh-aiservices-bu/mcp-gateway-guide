@@ -27,7 +27,9 @@ spec:
     kind: Service
     name: keycloak-service
   port:
-    targetPort: 8080
+    # Named port rather than 8080, so this keeps working if the operator
+    # renumbers the Service. keycloak-service exposes "http" and "management".
+    targetPort: http
   tls:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
