@@ -1,14 +1,14 @@
-= Phase 1: Prerequisites
+= Phase 1: Install the Operators
 
-Install the {mcp-gw} operator via OLM on {ocp-short}.
-
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+Install a Gateway API provider and the {mcp-gw} operator via OLM on {ocp-short}.
 
 == Overview
 
-The {mcp-gw} is delivered as an operator through the Red Hat Operator catalog. The operator manages the MCP Gateway controller and broker components that handle MCP server registration, tool aggregation, and request routing.
+The {mcp-gw} is delivered as an operator through the Red Hat Operator catalog. It is useful to understand up front that the pieces sit in *two layers*, not one flat list - this is the single most common source of confusion when verifying an install.
+
+=== Layer 1: Control plane (installed in this phase)
+
+These are cluster-level components. They exist as soon as the operator is installed, and there is one set of them per cluster.
 
 [cols="1,1,3", options="header"]
 |===
@@ -16,22 +16,95 @@ The {mcp-gw} is delivered as an operator through the Red Hat Operator catalog. T
 
 | MCP Gateway Operator
 | `mcp-gateway`
-| Manages MCPGatewayExtension, MCPServerRegistration, and MCPVirtualServer CRDs
+| Installs the CRDs (`MCPGatewayExtension`, `MCPServerRegistration`, `MCPVirtualServer`) and manages the controller
 
 | MCP Gateway Controller
 | `mcp-gateway`
-| Watches CRDs and configures the Gateway and HTTPRoutes
+| Reconciles those CRDs: creates the broker Deployment, writes its config secret, and manages HTTPRoutes and the Envoy `ext_proc` EnvoyFilter
 
-| MCP Gateway Broker
+| {rhcl} dependency operators
 | `mcp-gateway`
-| Handles MCP protocol sessions, tool aggregation, and request routing
+| Installed automatically as dependencies: Kuadrant, Authorino, Limitador and DNS operators. Needed later for xref:07-authentication.adoc[authentication] and xref:08-authorization.adoc[authorization]
 |===
+
+=== Layer 2: Data plane (created in Phase 3)
+
+IMPORTANT: There is *no broker after this phase*. The broker is created by the controller only once an `MCPGatewayExtension` exists, and it is deployed into the *extension's* namespace. You will see it appear in xref:03-mcp-gateway-extension.adoc[Phase 3].
+
+[cols="1,1,3", options="header"]
+|===
+| Component | Namespace | Purpose
+
+| MCP Broker + MCP Router
+| namespace of the `MCPGatewayExtension`
+| One pod per extension. Terminates MCP sessions, aggregates tools, and routes `tools/call` requests
+
+| Gateway proxy (Envoy)
+| depends on GatewayClass
+| The actual data path. With the `istio` GatewayClass it is deployed next to the Gateway object; with an Ingress-Operator-managed GatewayClass it lives in `openshift-ingress`
+|===
+
+NOTE: The broker and the router are *not two components*. They are one binary in one container, listening on two ports: `8080` serves the MCP protocol (broker) and `50051` serves gRPC for the Envoy `ext_proc` filter (router). A third port, `8181`, serves its config. Treating them as separate deployments will send you looking for a pod that does not exist.
 
 == Installation
 
-=== Step 1: Install OpenShift Service Mesh 3
+=== Step 1: Choose a Gateway API provider
 
-The {mcp-gw} requires the `istio` GatewayClass, which is provided by OpenShift Service Mesh 3 (OSSM3). Install the OSSM3 operator:
+The {mcp-gw} needs a Gateway API implementation. Before installing anything, find out what your cluster already has:
+
+[source,bash]
+----
+oc get gatewayclass
+----
+
+Pick the track that matches the output:
+
+[cols="1,2,2", options="header"]
+|===
+| Output | Track | What to do
+
+| No resources found
+| *Track A - self-managed OSSM3*
+| Continue with Step 2 below. This is the path the rest of the guide follows.
+
+| A GatewayClass already exists (for example `openshift-default`, or a {ocp-short} AI / data-science gateway class)
+| *Track B - existing provider*
+| *Skip Step 2 and Step 3.* Do not install OSSM3 and do not create an `Istio` CR.
+|===
+
+WARNING: On Track B, installing OSSM3 and creating a second `Istio` control plane will *conflict* with the Istio managed by the Ingress Operator in `openshift-ingress`. Only one Istio control plane can own the Gateway API resources.
+
+If you are on Track B, record your values now - later phases need them:
+
+[source,bash]
+----
+# Name of the GatewayClass you intend to use
+export GATEWAY_CLASS="openshift-default"
+
+# Namespace where the Gateway object will live. With an Ingress-Operator-managed
+# provider this is normally openshift-ingress, not mcp-gateway.
+export GATEWAY_NAMESPACE="openshift-ingress"
+----
+
+On Track A, use the defaults:
+
+[source,bash]
+----
+export GATEWAY_CLASS="istio"
+export GATEWAY_NAMESPACE="mcp-gateway"
+----
+
+Track B also changes three things later on, so it is worth flagging them here:
+
+* The Gateway and the `MCPGatewayExtension` end up in *different namespaces*, which makes the xref:03-mcp-gateway-extension.adoc[ReferenceGrant] mandatory rather than optional.
+* The extension's default `privateHost` assumes the `istio` GatewayClass naming and will point at a Service that does not exist. You must set it explicitly.
+* The gateway proxy Deployment you restart in xref:07-authentication.adoc[Phase 7] is managed in `openshift-ingress`.
+
+=== Step 2: Install OpenShift Service Mesh 3
+
+NOTE: Track A only. If your cluster already has a GatewayClass (Track B), skip this step and Step 3 and go straight to Step 4.
+
+The `istio` GatewayClass is provided by OpenShift Service Mesh 3 (OSSM3). Install the OSSM3 operator:
 
 [source,bash]
 ----
@@ -54,23 +127,23 @@ Create the Istio and IstioCNI control plane resources:
 oc apply -f manifests/01-prerequisites/service-mesh/istio.yaml
 ----
 
-Wait for Istio to become ready:
+Wait for Istio to become ready. The Istio control plane takes 2-3 minutes, and the `Istio` CR does not exist for the first few seconds, so poll instead of a bare `oc wait`:
 
 [source,bash]
 ----
-oc wait istio/default --for=condition=Ready --timeout=300s
+until oc get istio/default -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; do
+  sleep 10; echo -n "."
+done; echo " Istio ready"
 ----
 
-TIP: The Istio control plane takes 2-3 minutes to become ready. If `oc wait` returns "no matching resources found", wait a moment and retry.
-
-=== Step 2: Create the Namespace
+=== Step 4: Create the Namespace
 
 [source,bash]
 ----
 oc apply -f manifests/01-prerequisites/operators/namespace.yaml
 ----
 
-=== Step 3: Install the MCP Gateway Operator
+=== Step 5: Install the MCP Gateway Operator
 
 [source,bash]
 ----
@@ -81,16 +154,17 @@ This creates the OperatorGroup and Subscription for the `mcp-gateway` operator f
 
 == Verification
 
-=== Wait for Operator CSV to Succeed
+=== Wait for the Operator CSV to Succeed
+
+A CSV takes 30-60 seconds to even appear after a Subscription is applied, so `oc wait` reliably fails with `no matching resources found` on the first try. Poll instead:
 
 [source,bash]
 ----
-oc wait csv -n mcp-gateway \
-  -l operators.coreos.com/mcp-gateway.mcp-gateway="" \
-  --for=jsonpath='{.status.phase}'=Succeeded --timeout=600s
+until oc get csv -n mcp-gateway -l operators.coreos.com/mcp-gateway.mcp-gateway="" \
+        -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q Succeeded; do
+  sleep 10; echo -n "."
+done; echo " MCP Gateway operator installed"
 ----
-
-TIP: Operator CSVs take 30-60 seconds to appear after applying subscriptions. If `oc wait` returns "no matching resources found", wait a minute and retry.
 
 === Verify CRDs Are Available
 
@@ -101,14 +175,27 @@ oc get crd mcpserverregistrations.mcp.kuadrant.io
 oc get crd mcpvirtualservers.mcp.kuadrant.io
 ----
 
-=== Check Operator Pods
+=== Check the Operator Pods
 
 [source,bash]
 ----
 oc get pods -n mcp-gateway
 ----
 
-You should see the MCP Gateway controller and broker pods running.
+You should see the controller plus the {rhcl} dependency operators:
+
+[source]
+----
+NAME                                                     READY   STATUS
+authorino-operator-7bdd7f85d4-bc29b                      1/1     Running
+dns-operator-controller-manager-7c5557d999-m2jdc         1/1     Running
+kuadrant-console-plugin-5fbbb5cc98-zg4p4                 1/1     Running
+kuadrant-operator-controller-manager-5c56d46647-zfr74    1/1     Running
+limitador-operator-controller-manager-56675d65bd-pw924   1/1     Running
+mcp-gateway-controller-76ccdf845d-d6p8j                  1/1     Running
+----
+
+IMPORTANT: There is deliberately *no broker pod* here. If you are looking for one, see the two-layer explanation in the Overview - the controller creates the broker only after you create an `MCPGatewayExtension` in xref:03-mcp-gateway-extension.adoc[Phase 3].
 
 === Quick Status Check
 
@@ -116,6 +203,22 @@ You should see the MCP Gateway controller and broker pods running.
 ----
 oc get subscriptions.operators.coreos.com -n mcp-gateway \
   -o custom-columns='NAME:.metadata.name,CSV:.status.currentCSV,STATE:.status.state'
+----
+
+=== Verify the GatewayClass is Accepted
+
+[source,bash]
+----
+oc get gatewayclass
+----
+
+On Track A you should now see the `istio` GatewayClass with `ACCEPTED: True`:
+
+[source]
+----
+NAME           CONTROLLER                    ACCEPTED   AGE
+istio          istio.io/gateway-controller   True       41s
+istio-remote   istio.io/unmanaged-gateway    True       41s
 ----
 
 == Appendix
@@ -141,7 +244,7 @@ manifests/01-prerequisites/
 Issues filed against the official RHCL 1.4 docs based on E2E testing on fresh OCP 4.21 clusters:
 
 * link:https://issues.redhat.com/browse/OSDOCS-21434[OSDOCS-21434] (was link:https://issues.redhat.com/browse/CONNLINK-1497[CONNLINK-1497]) - OperatorGroup with OwnNamespace mode fails for MCP Gateway dependency operators. This guide uses AllNamespaces mode (`spec: {}`) as a workaround.
-* link:https://issues.redhat.com/browse/OSDOCS-21438[OSDOCS-21438] (was link:https://issues.redhat.com/browse/CONNLINK-1501[CONNLINK-1501]) - Section 1.1 missing OSSM3 / Gateway API provider as prerequisite. This guide includes OSSM3 installation as Step 1.
+* link:https://issues.redhat.com/browse/OSDOCS-21438[OSDOCS-21438] (was link:https://issues.redhat.com/browse/CONNLINK-1501[CONNLINK-1501]) - Section 1.1 missing OSSM3 / Gateway API provider as prerequisite. This guide includes OSSM3 installation as Step 2, behind a provider-detection step.
 
 == References
 

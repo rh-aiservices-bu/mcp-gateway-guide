@@ -1,10 +1,23 @@
+# Gateway with the two listeners the MCP Gateway needs.
+#
+# Traffic crosses this Gateway twice:
+#   mcp   - inbound  : external clients -> broker          (authentication here)
+#   mcps  - outbound : broker -> backend MCP servers       (authorization here)
+#
+# The *.mcp.local wildcard is never resolved by DNS. Each registered MCP server
+# gets a hostname under it purely so Envoy can select the matching HTTPRoute;
+# this traffic stays inside the cluster.
+#
+# GATEWAY_CLASS / GATEWAY_NAMESPACE are set in Phase 1 Step 1. They default to
+# istio / mcp-gateway for a self-managed OSSM3 install, but must be overridden
+# when the cluster's Gateway API provider is managed by the Ingress Operator.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: mcp-gateway
-  namespace: mcp-gateway
+  namespace: ${GATEWAY_NAMESPACE}
 spec:
-  gatewayClassName: istio
+  gatewayClassName: ${GATEWAY_CLASS}
   listeners:
     - name: mcp
       hostname: "${MCP_HOSTNAME}"

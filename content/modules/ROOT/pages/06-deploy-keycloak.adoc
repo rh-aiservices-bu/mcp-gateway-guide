@@ -2,10 +2,6 @@
 
 Deploy the {rhbk} ({rhbk}) as the OAuth 2.1 authorization server for {mcp-gw} authentication and authorization.
 
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
-
 == Overview
 
 This phase deploys a dedicated {rhbk} instance in the `mcp-test` namespace using the RHBK operator, then imports the MCP realm via a `KeycloakRealmImport` CR. The realm configuration includes:
@@ -24,11 +20,11 @@ This phase deploys a dedicated {rhbk} instance in the `mcp-test` namespace using
 | User | Tool Access | Groups
 
 | `mcp` (password: `mcp`)
-| All test1_ tools (greet, headers, add_tool, slow, time), all risk_ tools
+| All `test1_` tools, all `risk_` tools, all `dw_` tools (external server)
 | accounting, engineering, mcp-users
 
 | `restricted` (password: `restricted`)
-| test1_greet only
+| `test1_greet` only
 | mcp-users
 |===
 
@@ -39,6 +35,8 @@ Tool-level roles use the `tool:` prefix format (e.g., `tool:greet`, `tool:calcul
 == Prerequisites
 
 * The `mcp-test` namespace must exist (created in Phase 4 when deploying MCP servers)
+
+WARNING: The PostgreSQL deployment in these manifests uses *ephemeral storage* - no PersistentVolumeClaim. It is fine for a lab, but restarting the database pod wipes the realm, users and clients, and leaves the `keycloak-initial-admin` Secret out of sync with the database. Add a PVC before relying on this for anything you care about.
 
 == Installation
 
@@ -93,7 +91,9 @@ oc wait keycloak/keycloak -n mcp-test \
   --for=condition=Ready --timeout=300s
 ----
 
-The RHBK operator provisions a StatefulSet, Services, and a Route for the Keycloak instance. This may take a few minutes on the first deployment.
+The RHBK operator provisions a StatefulSet and Services for the Keycloak instance. This may take a few minutes on the first deployment.
+
+IMPORTANT: The operator does *not* create an OpenShift Route. With RHBK 26.4 it creates a plain `Ingress` named `keycloak-ingress`, and because this guide's `Keycloak` CR sets `hostname.strict: false` with no explicit `hostname`, that Ingress has *no host* - so OpenShift cannot derive a Route from it and Keycloak ends up unreachable. This guide therefore sets `spec.ingress.enabled: false` and ships its own Route (`manifests/06-deploy-keycloak/keycloak/route.yaml`), applied by the kustomization in Step 2. That also gives the Route a predictable name, `keycloak`, which every later phase depends on.
 
 === Step 5: Verify the Realm Import
 
@@ -118,7 +118,17 @@ NOTE: If you need to re-import the realm (e.g., after role changes), you must de
 [source,bash]
 ----
 export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
+export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
 echo "Keycloak URL: $KEYCLOAK_URL"
+----
+
+Stop here if that is empty. `KEYCLOAK_URL` feeds the issuer URL in both AuthPolicies in Phases 7 and 8, and an empty value fails silently now and confusingly later:
+
+[source,bash]
+----
+test -n "$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')" \
+  && echo "OK: Route exists" \
+  || echo "FAIL: no keycloak Route - re-apply manifests/06-deploy-keycloak/keycloak/"
 ----
 
 === Verify OIDC Discovery
@@ -149,7 +159,7 @@ oc get secret keycloak-initial-admin -n mcp-test -o jsonpath='{.data.password}' 
 
 Navigate to the `mcp` realm to verify:
 
-* Clients: `mcp-gateway`, `mcp-test/test-server1`, `mcp-test/risk-server`
+* Clients: `mcp-gateway`, `mcp-test/test-server1`, `mcp-test/risk-server`, `mcp-test/external-server`
 * Users: `mcp`, `restricted`
 * Groups: `accounting`, `engineering`, `mcp-users`
 * Client scopes: `groups`, `roles`
@@ -166,29 +176,40 @@ curl -sk -X POST "${KEYCLOAK_URL}/realms/mcp/protocol/openid-connect/token" \
   -d "client_id=mcp-gateway" \
   -d "username=mcp" \
   -d "password=mcp" \
-  -d "scope=openid groups roles" | jq '.access_token' -r | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '.resource_access, .groups'
+  -d "scope=openid groups roles" | jq -r '.access_token' | cut -d'.' -f2 \
+  | python3 -c 'import sys,base64,json; s=sys.stdin.read().strip(); d=json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))); print(json.dumps({"resource_access": d.get("resource_access"), "groups": d.get("groups")}, indent=2))'
 ----
 
-You should see the `resource_access` claim with `tool:` prefixed roles per MCP server and the user's groups:
+NOTE: The JWT payload is base64url encoded *without* padding, so a bare `base64 -d` fails with `Unfinished JSON term at EOF` or truncates the output. The `python3` snippet above restores the padding before decoding.
+
+You should see the `resource_access` claim with `tool:` prefixed roles per MCP server, including the external server registered in Phase 4, plus the user's groups:
 
 [source,json]
 ----
 {
-  "mcp-test/test-server1": {
-    "roles": ["tool:greet", "tool:headers", "tool:time", "tool:slow", "tool:add_tool"]
+  "resource_access": {
+    "mcp-test/test-server1": {
+      "roles": ["tool:greet", "tool:headers", "tool:time", "tool:slow", "tool:add_tool"]
+    },
+    "mcp-test/risk-server": {
+      "roles": [
+        "tool:calculate_dti",
+        "tool:calculate_ltv",
+        "tool:evaluate_credit_risk",
+        "tool:assess_income_stability",
+        "tool:assess_asset_sufficiency",
+        "tool:generate_risk_recommendation"
+      ]
+    },
+    "mcp-test/external-server": {
+      "roles": ["tool:read_wiki_structure", "tool:read_wiki_contents", "tool:ask_wiki_question"]
+    }
   },
-  "mcp-test/risk-server": {
-    "roles": [
-      "tool:calculate_dti",
-      "tool:calculate_ltv",
-      "tool:evaluate_credit_risk",
-      "tool:assess_income_stability",
-      "tool:assess_asset_sufficiency",
-      "tool:generate_risk_recommendation"
-    ]
-  }
+  "groups": ["accounting", "engineering", "mcp-users"]
 }
 ----
+
+If `resource_access` is missing a server entirely, the realm's `clientScopeMappings` are not granting that client's roles to the public `mcp-gateway` client - see <<clientscopemappings>>.
 
 NOTE: The token scope should be `openid groups roles`. Do not include `profile` or `email` scopes unless they are explicitly defined as custom client scopes in the realm - the default built-in scopes may not exist when using the KeycloakRealmImport approach.
 
@@ -207,10 +228,12 @@ manifests/06-deploy-keycloak/
     kustomization.yaml
     keycloak-db-secret.yaml          <-- PostgreSQL credentials
     keycloak-postgresql.yaml         <-- PostgreSQL Deployment + Service
-    keycloak.yaml                    <-- RHBK Keycloak CR
+    keycloak.yaml                    <-- RHBK Keycloak CR (ingress disabled)
+    route.yaml                       <-- Explicit edge Route named "keycloak"
     keycloakrealmimport-mcp.yaml     <-- RHBK realm import CR
 ----
 
+[#clientscopemappings]
 === clientScopeMappings
 
 The realm includes `clientScopeMappings` that allow the `mcp-gateway` public client to receive tool roles from the resource server clients (`mcp-test/test-server1`, `mcp-test/risk-server`) in its access tokens. Without these mappings, the `resource_access` claim in the token would not contain the tool roles.

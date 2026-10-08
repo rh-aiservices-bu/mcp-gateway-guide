@@ -1,0 +1,65 @@
+# TLS-origination proxy for an off-cluster MCP server.
+#
+# Why this exists: MCPServerRegistration.spec.targetRef only accepts an
+# HTTPRoute, and Gateway API backendRefs only accept Services. The obvious
+# approach - an ExternalName Service pointing at the remote host - does not
+# work, because the controller always builds a plaintext URL for the broker:
+#
+#   url: http://mcp.deepwiki.com:443/mcp     <-- HTTP against a TLS port
+#
+# which fails with "server returned 4xx for initialize POST". So we terminate
+# nothing and originate TLS here instead: the broker speaks plain HTTP to this
+# proxy inside the cluster, and the proxy speaks HTTPS to the remote server.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external-mcp-proxy-conf
+  namespace: mcp-test
+data:
+  nginx.conf: |
+    # Run as an unprivileged user: keep all mutable state under /tmp.
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 1024; }
+    http {
+      access_log /dev/stdout;
+      client_body_temp_path /tmp/client_body;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+
+      server {
+        listen 8080;
+
+        location / {
+          # ---- Remote MCP server -------------------------------------------
+          # Change these four lines to point at your own external server.
+          proxy_pass       https://mcp.deepwiki.com;
+          proxy_set_header Host mcp.deepwiki.com;
+          proxy_ssl_name   mcp.deepwiki.com;
+          proxy_ssl_server_name on;
+
+          proxy_ssl_protocols TLSv1.2 TLSv1.3;
+
+          # ---- Credential handling -----------------------------------------
+          # The broker forwards the end user's Authorization header upstream.
+          # Clearing it here prevents the internal Keycloak JWT from leaking to
+          # a third party, and stops remote servers rejecting an unknown token.
+          # If the remote server needs its own credential, replace the line
+          # below with a literal or a value injected from a mounted Secret:
+          #   proxy_set_header Authorization "Bearer <token>";
+          proxy_set_header Authorization "";
+
+          # ---- Streaming ----------------------------------------------------
+          # MCP uses Server-Sent Events, so buffering must be off or responses
+          # arrive only after the stream closes.
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_buffering off;
+          proxy_request_buffering off;
+          proxy_read_timeout 300s;
+          chunked_transfer_encoding on;
+        }
+      }
+    }

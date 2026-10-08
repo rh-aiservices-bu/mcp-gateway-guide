@@ -1,0 +1,20 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: external-server
+  namespace: mcp-test
+spec:
+  prefix: "dw_"
+  # path defaults to /mcp. Set it explicitly when the remote server exposes a
+  # different endpoint, e.g. /api/mcp or /v1/mcp.
+  path: /mcp
+  # category and hint are surfaced by the discover_tools meta-tool, which helps
+  # agents narrow down a large aggregated tool set.
+  category:
+    - documentation
+  hint: "External MCP server reached through an in-cluster TLS-origination proxy"
+  targetRef:
+    group: "gateway.networking.k8s.io"
+    kind: "HTTPRoute"
+    name: "external-server-route"
+    namespace: "mcp-test"

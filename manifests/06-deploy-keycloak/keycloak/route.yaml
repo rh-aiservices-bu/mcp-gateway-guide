@@ -1,0 +1,33 @@
+# Explicit Route for the RHBK instance.
+#
+# The RHBK operator does NOT create an OpenShift Route. It creates a plain
+# Ingress named "keycloak-ingress", and when spec.hostname.hostname is unset
+# that Ingress has no host, so OpenShift's ingress-to-route controller cannot
+# derive a Route from it. The result is no reachable Keycloak URL at all.
+#
+# We therefore disable the operator's Ingress (spec.ingress.enabled: false in
+# keycloak.yaml) and manage this Route ourselves. Owning the Route also gives
+# it a deterministic name ("keycloak"), which every later phase relies on:
+#   oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}'
+#
+# The host is left empty on purpose: OpenShift assigns
+# <name>-<namespace>.<cluster-ingress-domain>, so this manifest stays portable
+# across clusters. Keycloak is configured with hostname.strict: false and
+# proxy.headers: xforwarded, so it derives issuer URLs from the forwarded Host
+# header and matches whatever host the router assigns.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: keycloak
+  namespace: mcp-test
+  labels:
+    app: keycloak
+spec:
+  to:
+    kind: Service
+    name: keycloak-service
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

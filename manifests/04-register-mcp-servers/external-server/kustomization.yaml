@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - proxy-configmap.yaml
+  - proxy-deployment.yaml
+  - proxy-service.yaml
+  - httproute-external.yaml
+  - mcpsr-external.yaml

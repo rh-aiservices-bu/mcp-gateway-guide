@@ -2,53 +2,75 @@
 
 Create a Kubernetes Gateway object with an MCP listener for the {mcp-gw}.
 
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
-
 == Overview
 
-The {mcp-gw} uses the Kubernetes Gateway API to expose MCP endpoints. The `istio` GatewayClass, provided by OpenShift Service Mesh 3 (OSSM3), handles Gateway API support for the MCP Gateway.
+The {mcp-gw} uses the Kubernetes Gateway API to expose MCP endpoints. This guide's default is the `istio` GatewayClass provided by OpenShift Service Mesh 3, but any Gateway API provider works - see xref:01-prerequisites.adoc[Phase 1 Step 1] if you have not chosen one yet.
 
-The Gateway needs at least two listeners:
+The Gateway needs *two listeners*, and the reason is easy to miss: traffic passes through the Gateway *twice*.
 
-* An `mcp` listener for external MCP protocol traffic
-* An `mcps` listener for internal backend routing to MCP servers
+[cols="1,1,3", options="header"]
+|===
+| Listener | Hostname | Role
 
-The `mcps` listener uses a wildcard hostname (`*.mcp.local`) on port 8080 with HTTP protocol. This wildcard pattern simplifies backend routing - each MCP server gets a unique hostname (e.g., `test-server1.mcp.local`, `risk-server.mcp.local`) without requiring DNS configuration, since the traffic stays internal to the cluster.
+| `mcp`
+| `mcp.<cluster-domain>`
+| *Inbound.* Where external clients send MCP requests. Authentication is enforced here (xref:07-authentication.adoc[Phase 7]).
+
+| `mcps`
+| `*.mcp.local`
+| *Outbound.* The broker does not call backend MCP servers directly - it dials them back *through this listener*. Authorization is enforced here (xref:08-authorization.adoc[Phase 8]).
+|===
+
+Because the broker re-enters the Gateway on the `mcps` listener, each registered MCP server needs its own hostname under the `*.mcp.local` wildcard (for example `test-server1.mcp.local`, `risk-server.mcp.local`). The `.mcp.local` suffix is never resolved by DNS - it only has to match the wildcard so Envoy can pick the right HTTPRoute, and the traffic never leaves the cluster.
+
+NOTE: Both listeners are plain HTTP on port 8080. TLS for external clients is handled by the OpenShift Route in Step 3. See <<tls-termination-options>> if you need encryption all the way to the Gateway.
 
 == Installation
 
-=== Step 1: Determine Your Cluster Domain
+=== Step 1: Set Your Environment
 
-The Gateway hostname is based on your cluster's application domain:
+The Gateway hostname is derived from your cluster's application domain:
 
 [source,bash]
 ----
 export CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')
-echo "Cluster domain: $CLUSTER_DOMAIN"
+export MCP_HOSTNAME="mcp.${CLUSTER_DOMAIN}"
+
+# From Phase 1 Step 1. Defaults shown are for Track A (self-managed OSSM3).
+export GATEWAY_CLASS="${GATEWAY_CLASS:-istio}"
+export GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-mcp-gateway}"
+
+echo "Cluster domain:    $CLUSTER_DOMAIN"
+echo "MCP hostname:      $MCP_HOSTNAME"
+echo "GatewayClass:      $GATEWAY_CLASS"
+echo "Gateway namespace: $GATEWAY_NAMESPACE"
 ----
 
 === Step 2: Create the Gateway
 
-Generate the Gateway manifest with your cluster domain and apply it:
+Generate the Gateway manifest and apply it:
 
 [source,bash]
 ----
-export MCP_HOSTNAME="mcp.${CLUSTER_DOMAIN}"
-echo "MCP hostname: $MCP_HOSTNAME"
-
 envsubst < manifests/02-gateway-setup/gateway.yaml.tmpl | oc apply -f -
 ----
 
-This creates a Gateway in the `mcp-gateway` namespace with:
+This creates a Gateway in `$GATEWAY_NAMESPACE` with:
 
-* *mcp listener* (port 8080) - Main MCP protocol endpoint for external traffic
-* *mcps listener* (port 8080, hostname: `*.mcp.local`) - Internal listener for MCP server backend routing
-* Hostname set to `mcp.<cluster-domain>` for the external listener
-* `gatewayClassName: istio`
+* *mcp listener* (port 8080, hostname `mcp.<cluster-domain>`) - inbound MCP protocol endpoint
+* *mcps listener* (port 8080, hostname `*.mcp.local`) - outbound listener the broker dials back through
+* `gatewayClassName: $GATEWAY_CLASS`
 
-NOTE: With the `istio` GatewayClass, the gateway proxy (Envoy) deploys in the `mcp-gateway` namespace as `mcp-gateway-istio`. Both the Gateway object and the proxy deployment live in the same namespace.
+The gateway proxy Deployment that this produces is named `<gateway-name>-<gatewayclass-name>`. With the defaults that is `mcp-gateway-istio` in the `mcp-gateway` namespace. Confirm the real name, because xref:07-authentication.adoc[Phase 7] asks you to restart it:
+
+[source,bash]
+----
+oc get deploy -n "$GATEWAY_NAMESPACE" \
+  -l gateway.networking.k8s.io/gateway-name=mcp-gateway \
+  -o name
+----
+
+NOTE: With an Ingress-Operator-managed GatewayClass (Track B), the Gateway object and its proxy are managed in `openshift-ingress`, and the proxy naming is controlled by that operator - always read the name from the command above rather than assuming it.
 
 === Step 3: Create the OpenShift Route
 
@@ -67,29 +89,87 @@ This creates an edge-TLS Route that bridges external traffic from the default HA
 
 [source,bash]
 ----
-oc wait gateway/mcp-gateway -n mcp-gateway \
+oc wait gateway/mcp-gateway -n "$GATEWAY_NAMESPACE" \
   --for=condition=Accepted --timeout=120s
 ----
 
-NOTE: The top-level `Programmed` condition may show `False` with `AddressNotAssigned` because the `istio` GatewayClass creates a LoadBalancer service that stays `<pending>` without MetalLB. This is expected - the OpenShift Route bypasses the LoadBalancer. Check the individual listener conditions instead, which should show `Programmed: True`.
+The top-level `Programmed` condition will show `False` with `AddressNotAssigned`:
+
+[source]
+----
+NAME          CLASS   ADDRESS   PROGRAMMED   AGE
+mcp-gateway   istio             False        27s
+----
+
+This is expected, not a failure. The `istio` GatewayClass creates a LoadBalancer Service which stays `<pending>` with no MetalLB, and the Route bypasses it anyway. Check the per-listener conditions instead:
+
+[source,bash]
+----
+oc get gateway mcp-gateway -n "$GATEWAY_NAMESPACE" \
+  -o jsonpath='{range .status.listeners[*]}{.name}{"\t"}{.conditions[?(@.type=="Programmed")].status}{"\n"}{end}'
+----
+
+Both `mcp` and `mcps` should report `True`.
 
 === Check Gateway Proxy Pod
 
 [source,bash]
 ----
-oc get pods -n mcp-gateway -l gateway.networking.k8s.io/gateway-name=mcp-gateway
+oc get pods -n "$GATEWAY_NAMESPACE" -l gateway.networking.k8s.io/gateway-name=mcp-gateway
 ----
 
-The gateway proxy pod (`mcp-gateway-istio-*`) should be `Running` and `Ready`.
+The gateway proxy pod (`mcp-gateway-istio-*` with the defaults) should be `Running` and `Ready`.
 
 === Verify the Route is Created
 
-Check the Route was created in the `mcp-gateway` namespace:
+[source,bash]
+----
+oc get routes -n "$GATEWAY_NAMESPACE"
+----
+
+=== Confirm the Gateway Answers
 
 [source,bash]
 ----
-oc get routes -n mcp-gateway
+curl -sk -o /dev/null -w "HTTP %{http_code}\n" "https://${MCP_HOSTNAME}/mcp"
 ----
+
+A `404` is a *success* at this stage: TLS terminated, the Route reached Envoy, and Envoy had no matching route yet because the broker does not exist. A connection error or `503` means the Route or Gateway is not wired up.
+
+[#tls-termination-options]
+== TLS Termination Options
+
+The Route created above uses *edge* termination, which is the simplest option and the one the rest of this guide assumes. It is not always acceptable: HAProxy decrypts at the edge and forwards *cleartext* to the Gateway inside the cluster. Environments that mandate encryption in transit need one of the other two modes.
+
+[cols="1,1,1,2", options="header"]
+|===
+| Mode | Gateway listener | Certificate on | Trade-off
+
+| `edge` (default here)
+| HTTP :8080
+| Router (cluster wildcard)
+| Simplest, no certificate management. Cleartext between router and Gateway.
+
+| `reencrypt`
+| HTTPS :8443 + `certificateRefs`
+| Router *and* Gateway
+| Encrypted end to end. The router still terminates, so it can route on HTTP attributes.
+
+| `passthrough`
+| HTTPS :8443 + `certificateRefs`
+| Gateway only
+| The router forwards TLS untouched. Strongest isolation, but the router cannot inspect or rewrite anything.
+|===
+
+Switching to `reencrypt` or `passthrough` is not just a Route edit - it requires three coordinated changes:
+
+. *Change the listener to HTTPS.* Set `protocol: HTTPS` and `port: 8443` on the `mcp` listener and add `tls.certificateRefs` pointing at a Secret holding a certificate for `mcp.<cluster-domain>`.
+. *Provide that certificate.* Either issue one with cert-manager (a `Certificate` whose `secretName` matches the `certificateRefs` entry) or create the TLS Secret manually. The cluster wildcard certificate is not usable here because it is owned by the ingress operator.
+. *Repoint the Route.* Target the listener's new port and set the matching `termination`. With `passthrough`, the Route carries no certificate of its own and the client's SNI must match the listener hostname exactly, so the Route `host` and the listener `hostname` have to agree.
+
+WARNING: With `passthrough`, `insecureEdgeTerminationPolicy: Redirect` is invalid - only `None` is accepted. Leaving the `Redirect` value from the edge template in place will cause the Route to be rejected.
+
+Leave the `mcps` listener on plain HTTP in all three cases. It only carries broker-to-backend traffic inside the cluster, and the authorization policy in xref:08-authorization.adoc[Phase 8] inspects headers on it.
 
 == DNS Management
 
@@ -104,8 +184,8 @@ On cloud platforms ({ocp-short} on AWS, Azure, GCP), you could alternatively use
 [source]
 ----
 manifests/02-gateway-setup/
-  gateway.yaml.tmpl
-  route.yaml.tmpl            <-- OpenShift Route for external access
+  gateway.yaml.tmpl          <-- Gateway with the mcp and mcps listeners
+  route.yaml.tmpl            <-- Edge-terminated Route for external access
 ----
 
 == Related Issues
