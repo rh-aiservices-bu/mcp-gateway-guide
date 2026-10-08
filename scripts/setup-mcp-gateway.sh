@@ -189,6 +189,10 @@ phase_4() {
     run "oc apply -f ${REPO_ROOT}/manifests/04-register-mcp-servers/mcpsr-test.yaml"
     run "oc apply -f ${REPO_ROOT}/manifests/04-register-mcp-servers/mcpsr-risk.yaml"
 
+    log_step "Registering external (off-cluster) MCP server via TLS-origination proxy"
+    run "oc apply -k ${REPO_ROOT}/manifests/04-register-mcp-servers/external-server/"
+    run "oc wait pod -n mcp-test -l app=external-mcp-proxy --for=condition=Ready --timeout=120s" || log_warn "External MCP proxy not ready yet"
+
     log_step "Restarting broker to load server config"
     run "oc rollout restart deployment/mcp-gateway -n ${MCP_NS}"
     run "oc rollout status deployment/mcp-gateway -n ${MCP_NS} --timeout=60s"
@@ -196,7 +200,7 @@ phase_4() {
     log_step "Waiting for MCPServerRegistrations to become Ready..."
     for i in {1..20}; do
         READY_COUNT=$(oc get mcpsr -A -o jsonpath='{range .items[*]}{.status.ready}{"\n"}{end}' 2>/dev/null | grep -c "true" || true)
-        if [[ "$READY_COUNT" -ge 2 ]]; then
+        if [[ "$READY_COUNT" -ge 3 ]]; then
             log_ok "All MCPServerRegistrations ready ($READY_COUNT)"
             break
         fi
@@ -255,10 +259,23 @@ phase_6() {
         oc get keycloakrealmimport mcp -n mcp-test 2>/dev/null || true
     }
 
-    log_step "Creating Keycloak Route"
-    run "oc create route edge keycloak --service=keycloak-service --port=8080 -n mcp-test 2>/dev/null || true"
+    # The Route ships in manifests/06-deploy-keycloak/keycloak/route.yaml and was
+    # applied with the kustomization above. The RHBK operator does not create one:
+    # it creates a hostless Ingress, which yields no usable URL.
+    log_step "Resolving Keycloak Route"
+    KC_HOST=$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}' 2>/dev/null || true)
+    if [[ -z "$KC_HOST" ]]; then
+        log_warn "No keycloak Route found; re-applying Keycloak manifests"
+        run "oc apply -k ${REPO_ROOT}/manifests/06-deploy-keycloak/keycloak/"
+        sleep 5
+        KC_HOST=$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}' 2>/dev/null || true)
+    fi
+    if [[ -z "$KC_HOST" ]]; then
+        log_warn "Still no keycloak Route. Phases 7-9 will fail without it."
+        return 1
+    fi
 
-    export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}')"
+    export KEYCLOAK_URL="https://${KC_HOST}"
     export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
     log_ok "RHBK URL: $KEYCLOAK_URL"
 
@@ -360,22 +377,8 @@ phase_9() {
     run "sleep 10"
 
     log_step "Merging virtual server config into broker config secret"
-    if oc get secret mcp-gateway-config -n mcp-system &>/dev/null; then
-        VS_YAML=$(oc get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d)
-        BROKER_YAML=$(oc get secret mcp-gateway-config -n ${MCP_NS} -o jsonpath='{.data.config\.yaml}' | base64 -d)
-        MERGED_B64=$(python3 -c "
-import yaml, sys, base64
-broker = yaml.safe_load('''${BROKER_YAML}''')
-vs = yaml.safe_load('''${VS_YAML}''')
-broker['virtualServers'] = vs.get('virtualServers', [])
-print(base64.b64encode(yaml.dump(broker, default_flow_style=False).encode()).decode())
-")
-        oc patch secret mcp-gateway-config -n ${MCP_NS} --type='json' \
-            -p="[{\"op\":\"replace\",\"path\":\"/data/config.yaml\",\"value\":\"${MERGED_B64}\"}]"
-        log_ok "Virtual server config merged into broker config"
-    else
-        log_warn "Virtual server config secret not found in mcp-system, skipping merge"
-    fi
+    run "bash ${REPO_ROOT}/scripts/merge-virtualserver-config.sh ${MCP_NS}" \
+        || log_warn "Virtual server config merge failed; X-Mcp-Virtualserver requests will not work"
 
     log_step "Restarting broker to load virtual server config"
     run "oc rollout restart deployment/mcp-gateway -n ${MCP_NS}"

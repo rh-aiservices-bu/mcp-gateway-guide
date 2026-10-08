@@ -1,8 +1,19 @@
+# Edge-terminated Route exposing the Gateway's "mcp" listener externally.
+#
+# Why a Route at all: the istio GatewayClass creates a LoadBalancer Service,
+# which stays <pending> forever on bare-metal or workshop clusters with no
+# MetalLB. The Route bridges the default HAProxy ingress controller straight to
+# the gateway Service on port 8080 and bypasses the LoadBalancer entirely.
+#
+# Termination is "edge": HAProxy terminates TLS using the cluster wildcard
+# certificate and forwards cleartext in-cluster, which is why the Gateway
+# listener can be plain HTTP. If you need TLS all the way to the Gateway, see
+# the "TLS termination options" section in Phase 2.
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: mcp-gateway
-  namespace: mcp-gateway
+  namespace: ${GATEWAY_NAMESPACE}
 spec:
   host: "${MCP_HOSTNAME}"
   to:

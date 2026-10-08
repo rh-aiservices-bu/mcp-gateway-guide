@@ -2,7 +2,7 @@
 * xref:quick-start.adoc[Automated Setup]
 
 .Installation & Configuration
-* xref:01-prerequisites.adoc[Phase 1: Prerequisites]
+* xref:01-prerequisites.adoc[Phase 1: Install the Operators]
 * xref:02-gateway-setup.adoc[Phase 2: Gateway Setup]
 * xref:03-mcp-gateway-extension.adoc[Phase 3: MCP Gateway Extension]
 * xref:04-register-mcp-servers.adoc[Phase 4: Register MCP Servers]

@@ -2,9 +2,11 @@
 
 Deploy {mcp-gw} on {ocp-short} using a single automation script.
 
+NOTE: The script follows *Track A* from xref:01-prerequisites.adoc[Phase 1] - it installs OpenShift Service Mesh 3 and creates an Istio control plane. If your cluster already provides a GatewayClass (for example an Ingress-Operator-managed Istio), do not use this script as-is: it will create a conflicting second control plane. Follow the phases manually instead.
+
 == Basic Installation (Phases 1-5)
 
-Installs the MCP Gateway operator, configures the Gateway, deploys two test MCP servers, and verifies tool discovery.
+Installs the MCP Gateway operator, configures the Gateway, deploys two in-cluster MCP servers plus one external server, and verifies tool discovery.
 
 [source,bash]
 ----
@@ -48,7 +50,7 @@ After the script completes, run the verification script:
 ./scripts/verify.sh
 ----
 
-This performs MCP session initialization and tool discovery, verifying that all registered MCP servers respond correctly through the gateway.
+This performs MCP session initialization and tool discovery, verifying that all registered MCP servers respond correctly through the gateway. It detects automatically whether an AuthPolicy is in force and fetches a token when needed; override with `--with-auth` or `--no-auth`.
 
 == Teardown
 
@@ -61,4 +63,4 @@ To remove all resources created by the guide:
 
 == Next step
 
-For step-by-step instructions, start with xref:01-prerequisites.adoc[Phase 1: Prerequisites].
+For step-by-step instructions, start with xref:01-prerequisites.adoc[Phase 1: Install the Operators].

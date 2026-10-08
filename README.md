@@ -4,7 +4,7 @@ Step-by-step guide for installing and configuring MCP Gateway (Red Hat Connectiv
 
 ## What's Inside
 
-- **Part 1 - Installation & Configuration**: OLM-based operator install, Gateway setup, MCPGatewayExtension, MCP server registration, and end-to-end verification
+- **Part 1 - Installation & Configuration**: Gateway API provider selection, OLM-based operator install, Gateway setup, MCPGatewayExtension, registration of in-cluster **and external** MCP servers, and end-to-end verification
 - **Part 2 - Authentication & Authorization**: RHBK deployment, OAuth 2.1 / JWT authentication with AuthPolicy, tool-level authorization using CEL expressions, and virtual MCP servers
 
 ## Quick Start
@@ -32,4 +32,6 @@ antora generate site.yml
 
 - OpenShift 4.19+ with cluster-admin access
 - `oc` CLI authenticated
-- `envsubst`, `curl`, `jq` available on PATH
+- `envsubst`, `curl`, `jq`, `python3` available on PATH
+
+> **Note:** `setup-mcp-gateway.sh` installs OpenShift Service Mesh 3 and creates an Istio control plane. If your cluster already provides a GatewayClass (for example an Ingress-Operator-managed Istio), do not run it as-is - it would create a conflicting second control plane. Follow the phases manually instead; see Phase 1.

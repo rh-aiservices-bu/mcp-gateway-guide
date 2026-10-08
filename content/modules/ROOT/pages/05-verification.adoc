@@ -2,10 +2,6 @@
 
 Verify end-to-end MCP session initialization and tool discovery through the {mcp-gw}.
 
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
-
 == Overview
 
 The MCP protocol uses a JSON-RPC session-based flow. To verify the gateway is working:
@@ -92,23 +88,39 @@ curl -sk -X POST "${MCP_URL}" \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}' | jq '.result.tools[].name'
 ----
 
-You should see tools from both registered servers with their prefixes, plus gateway-level tools (13 total):
+You should see prefixed tools from every registered server, plus the gateway's own meta-tools:
 
 [source]
 ----
-"discover_tools"
-"risk_assess_asset_sufficiency"
+"discover_tools"                      <-- gateway meta-tool
+"select_tools"                        <-- gateway meta-tool
+"dw_ask_wiki_question"                <-- external server, dw_ prefix
+"dw_read_wiki_contents"
+"dw_read_wiki_structure"
+"risk_assess_asset_sufficiency"       <-- risk server, risk_ prefix
 "risk_assess_income_stability"
 "risk_calculate_dti"
 "risk_calculate_ltv"
 "risk_evaluate_credit_risk"
 "risk_generate_risk_recommendation"
-"select_tools"
-"test1_add_tool"
+"test1_add_tool"                      <-- test server, test1_ prefix
 "test1_greet"
 "test1_headers"
 "test1_slow"
 "test1_time"
+...
+----
+
+Do not treat the total as fixed - the upstream test image gains tools over time, and your own registrations change it. The check that matters is that every prefix you registered is represented. Count them per prefix:
+
+[source,bash]
+----
+curl -sk -X POST "${MCP_URL}" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "mcp-session-id: ${SESSION_ID}" \
+  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}' \
+  | jq -r '.result.tools[].name | split("_")[0]' | sort | uniq -c
 ----
 
 === Step 5: Test a Tool Call
@@ -189,8 +201,13 @@ Then connect to `https://\{MCP_HOSTNAME}/mcp` using the Streamable HTTP transpor
 === No Tools Returned
 
 * Check that MCPServerRegistrations are Ready: `oc get mcpsr -A`
+* If a registration is `Ready` but its tools are missing, restart the broker - it loads servers from its config secret at startup: `oc rollout restart deployment/mcp-gateway -n mcp-gateway`
 * Check broker logs: `oc logs -n mcp-gateway deployment/mcp-gateway --tail=30`
 * Verify the MCP servers are running: `oc get pods -n mcp-test`
+
+=== 404 Instead of a JSON-RPC Response
+
+The Route reached Envoy but Envoy had no matching route. Usually the `MCPGatewayExtension` is missing or not Ready, so no HTTPRoute was created for the broker: `oc get mcpgatewayextension -n mcp-gateway` and `oc get httproute -n mcp-gateway`.
 
 === Connection Refused
 

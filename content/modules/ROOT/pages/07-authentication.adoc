@@ -2,10 +2,6 @@
 
 Configure OAuth 2.1 authentication for the {mcp-gw} using Kuadrant AuthPolicy and {rhbk}.
 
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
-
 == Overview
 
 The {mcp-gw} implements the link:https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[MCP Authorization specification] based on OAuth 2.1. When authentication is enabled:
@@ -36,10 +32,13 @@ export KEYCLOAK_URL="https://$(oc get route keycloak -n mcp-test -o jsonpath='{.
 export KEYCLOAK_ISSUER="${KEYCLOAK_URL}/realms/mcp"
 export MCP_HOSTNAME="mcp.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
 export MCP_URL="https://${MCP_HOSTNAME}/mcp"
+export GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-mcp-gateway}"
 
 echo "Keycloak issuer: $KEYCLOAK_ISSUER"
 echo "MCP URL: $MCP_URL"
 ----
+
+IMPORTANT: Confirm `KEYCLOAK_ISSUER` is a full URL and not `https:///realms/mcp`. It is baked into both AuthPolicies, and an empty host produces a gateway that rejects every token with an opaque `401`.
 
 === Step 2: Configure OAuth via MCPGatewayExtension
 
@@ -80,14 +79,16 @@ TIP: For a detailed explanation of each manifest and the request flow, see the l
 
 ==== Verify OperatorGroup is AllNamespaces Mode
 
-The Authorino operator (installed as a dependency of the MCP Gateway operator) requires the OperatorGroup to be in AllNamespaces mode. If you followed Phase 1, the OperatorGroup was already created with `spec: {}` (AllNamespaces). Verify:
+The Authorino operator (installed as a dependency of the MCP Gateway operator) requires the OperatorGroup to be in AllNamespaces mode. If you followed Phase 1, the OperatorGroup was created with `spec: {}`, which means AllNamespaces. Verify by checking that `targetNamespaces` is *absent*:
 
 [source,bash]
 ----
-oc get operatorgroup -n mcp-gateway -o jsonpath='{.items[0].spec}'
+oc get operatorgroup -n mcp-gateway -o jsonpath='{.items[0].spec.targetNamespaces}'
 ----
 
-This should return `{}` (empty, meaning AllNamespaces). If it shows `targetNamespaces`, re-apply the Phase 1 manifests: `oc apply -k manifests/01-prerequisites/operators/`.
+Empty output is correct. If it lists namespaces, re-apply the Phase 1 manifests: `oc apply -k manifests/01-prerequisites/operators/`.
+
+NOTE: Do not check `jsonpath='{.items[0].spec}'` and expect a literal `{}`. OLM defaults a field in, so a correctly configured OperatorGroup actually reports `{"upgradeStrategy":"Default"}`. The presence or absence of `targetNamespaces` is what matters.
 
 ==== Create the Kuadrant CR
 
@@ -113,9 +114,15 @@ With the `istio` GatewayClass, the gateway proxy deployment runs in the `mcp-gat
 
 [source,bash]
 ----
-oc rollout restart deployment/mcp-gateway-istio -n mcp-gateway
-oc rollout status deployment/mcp-gateway-istio -n mcp-gateway --timeout=60s
+GATEWAY_DEPLOY=$(oc get deploy -n "$GATEWAY_NAMESPACE" \
+  -l gateway.networking.k8s.io/gateway-name=mcp-gateway -o name | head -1)
+echo "Restarting $GATEWAY_DEPLOY"
+
+oc rollout restart "$GATEWAY_DEPLOY" -n "$GATEWAY_NAMESPACE"
+oc rollout status  "$GATEWAY_DEPLOY" -n "$GATEWAY_NAMESPACE" --timeout=120s
 ----
+
+Deriving the name from the label avoids hardcoding `mcp-gateway-istio`, which is only correct for the `istio` GatewayClass.
 
 === Step 4: Create the AuthPolicy
 
@@ -138,7 +145,7 @@ Wait for the AuthPolicy to be enforced:
 [source,bash]
 ----
 oc wait authpolicy/mcp-auth-policy -n mcp-gateway \
-  --for=condition=Enforced --timeout=60s
+  --for=condition=Enforced --timeout=120s
 ----
 
 == Verification

@@ -22,3 +22,7 @@ spec:
     strictBackchannel: false
   proxy:
     headers: xforwarded
+  # The RHBK operator would otherwise create a hostless Ingress that yields no
+  # usable Route. We disable it and ship an explicit Route (route.yaml) instead.
+  ingress:
+    enabled: false

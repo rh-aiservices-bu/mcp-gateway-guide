@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-mcp-proxy
+  namespace: mcp-test
+  labels:
+    app: external-mcp-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: external-mcp-proxy
+  template:
+    metadata:
+      labels:
+        app: external-mcp-proxy
+    spec:
+      containers:
+        - name: nginx
+          image: registry.access.redhat.com/ubi9/nginx-124:latest
+          # The UBI nginx image defaults to an S2I entrypoint; invoke nginx
+          # directly against our mounted config instead.
+          command: ["nginx", "-g", "daemon off;", "-c", "/etc/nginx-mcp/nginx.conf"]
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/nginx-mcp
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+      volumes:
+        - name: conf
+          configMap:
+            name: external-mcp-proxy-conf

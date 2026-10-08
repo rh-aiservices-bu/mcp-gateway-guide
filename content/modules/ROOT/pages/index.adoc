@@ -5,7 +5,7 @@ Guide to deploy and configure {mcp-gw} ({rhcl} 1.4) on {ocp-short}.
 * Kustomize manifests with status gates between every phase
 * Single automation script for end-to-end deployment
 * Real authentication and authorization examples with {rhbk}
-* Two MCP servers (test, risk assessment) for hands-on validation
+* Three MCP servers - two in-cluster and one *off-cluster* - for hands-on validation
 
 Requires OpenShift 4.19+ with cluster-admin access.
 
@@ -35,7 +35,11 @@ cd mcp-gateway-guide
 You also need:
 
 * {ocp-short} 4.19+ cluster with `oc` CLI authenticated as cluster-admin
-* `envsubst`, `curl`, `jq` available on PATH
+* `envsubst`, `curl`, `jq`, `python3` available on PATH
+
+TIP: All file paths and `oc apply` commands in this guide are relative to the repository root, so run everything from `mcp-gateway-guide/`.
+
+Every phase exports shell variables that later phases reuse (`CLUSTER_DOMAIN`, `MCP_HOSTNAME`, `GATEWAY_CLASS`, `GATEWAY_NAMESPACE`, `KEYCLOAK_ISSUER`). Work in one shell session, or re-run the export blocks at the top of each phase if you start a new one.
 
 == Phases
 
@@ -47,20 +51,20 @@ Each phase has step-by-step instructions, status gates, and troubleshooting.
 |===
 | Phase | Description | Time
 
-| xref:01-prerequisites.adoc[1. Prerequisites]
-| OSSM3, Istio control plane, and MCP Gateway operator via OLM
+| xref:01-prerequisites.adoc[1. Install the Operators]
+| Choose a Gateway API provider, then install OSSM3 (if needed) and the MCP Gateway operator via OLM
 | 10 min
 
 | xref:02-gateway-setup.adoc[2. Gateway Setup]
-| Gateway object with MCP and mcps listeners
+| Gateway object with the inbound `mcp` and outbound `mcps` listeners, plus an OpenShift Route
 | 5 min
 
 | xref:03-mcp-gateway-extension.adoc[3. MCP Gateway Extension]
-| MCPGatewayExtension CR, ReferenceGrant, HTTPRoute management
+| MCPGatewayExtension CR, ReferenceGrant, HTTPRoute management. This is what creates the broker
 | 5 min
 
 | xref:04-register-mcp-servers.adoc[4. Register MCP Servers]
-| Deploy test and risk MCP servers with MCPServerRegistration
+| Register two in-cluster MCP servers and one external, off-cluster server
 | 10 min
 
 | xref:05-verification.adoc[5. Verification]
@@ -114,9 +118,17 @@ For end-to-end deployment using a single script, see the xref:quick-start.adoc[A
 | Creates curated tool collections from registered servers
 |===
 
-== Architecture
+== How the Pieces Fit Together
 
-For a deep dive into how the {mcp-gw} components work together - the MCP Broker, MCP Router (ext_proc), and Gateway Controller - see the xref:architecture.adoc[Architecture & Request Flow] page.
+It is worth getting one thing straight before you start, because it causes more confusion than anything else in the install:
+
+* The *operator and controller* are cluster-level and exist as soon as you finish xref:01-prerequisites.adoc[Phase 1].
+* The *broker* does not. It is created by the controller only once an `MCPGatewayExtension` exists, in that extension's namespace - which happens in xref:03-mcp-gateway-extension.adoc[Phase 3].
+* The *broker and the router are the same process*: one container listening on `8080` for the MCP protocol and `50051` for the Envoy `ext_proc` gRPC calls.
+
+So there are two layers, not three components side by side. If you go looking for a broker pod after Phase 1, you will not find one, and nothing is wrong.
+
+For a deep dive into the request flow, see the xref:architecture.adoc[Architecture & Request Flow] page.
 
 == Documentation
 

@@ -30,14 +30,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Auto-detect whether authentication is in force, so the script does the right
+# thing whether it is run after Phase 5 or after Phase 9. Running without auth
+# against an authenticated gateway otherwise fails with a bare "Unauthorized".
+MCP_NS="${MCP_NS:-mcp-gateway}"
 if [[ "${1:-}" == "--with-auth" ]]; then
     AUTH_ENABLED=true
+elif [[ "${1:-}" == "--no-auth" ]]; then
+    AUTH_ENABLED=false
+elif oc get authpolicy -n "$MCP_NS" -o name 2>/dev/null | grep -q authpolicy; then
+    AUTH_ENABLED=true
+    log_info "Detected an AuthPolicy in $MCP_NS; running in authenticated mode"
 fi
 
 log_step "MCP Gateway Verification"
 log_info "Cluster domain: $CLUSTER_DOMAIN"
 log_info "MCP endpoint:   $MCP_URL"
-log_info "Auth enabled:   $AUTH_ENABLED"
+log_info "Auth enabled:   $AUTH_ENABLED (override with --with-auth / --no-auth)"
 
 # Step 1: Initialize MCP session
 log_step "Step 1: Initialize MCP Session"
@@ -115,7 +124,7 @@ done
 # Step 4: Verify tool prefixes
 log_step "Step 4: Verify Tool Prefixes"
 
-EXPECTED_PREFIXES=("test1_" "risk_")
+EXPECTED_PREFIXES=("test1_" "risk_" "dw_")
 FOUND_PREFIXES=()
 
 for prefix in "${EXPECTED_PREFIXES[@]}"; do

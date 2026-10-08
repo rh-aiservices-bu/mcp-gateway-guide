@@ -2,10 +2,6 @@
 
 Create curated tool collections using MCPVirtualServer custom resources.
 
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
-
 == Overview
 
 Virtual MCP servers solve a common problem: while aggregating all tools behind a single gateway is great for governance, it can overwhelm LLMs with too many tools to choose from.
@@ -61,31 +57,24 @@ You should see `reconciling mcpvirtualserver` messages without errors.
 
 === Step 3: Merge Virtual Server Config into the Broker
 
-The MCPVirtualServer controller writes virtual server definitions to a config secret in the `mcp-system` namespace, but the broker reads its config from a secret in the `mcp-gateway` namespace. You need to merge the virtual server entries into the broker's config secret so the broker can find them.
+The MCPVirtualServer controller writes its definitions to a `mcp-gateway-config` secret in the *`mcp-system`* namespace, but the broker only ever reads the `mcp-gateway-config` secret in *its own* namespace. Nothing bridges the two, so the definitions have to be merged across:
 
 [source,bash]
 ----
-# Read the virtual server config from mcp-system
-VS_YAML=$(oc get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d)
-
-# Read the current broker config from mcp-gateway
-BROKER_YAML=$(oc get secret mcp-gateway-config -n mcp-gateway -o jsonpath='{.data.config\.yaml}' | base64 -d)
-
-# Merge virtual servers into the broker config
-MERGED_B64=$(python3 -c "
-import yaml, sys, base64
-broker = yaml.safe_load('''${BROKER_YAML}''')
-vs = yaml.safe_load('''${VS_YAML}''')
-broker['virtualServers'] = vs.get('virtualServers', [])
-print(base64.b64encode(yaml.dump(broker, default_flow_style=False).encode()).decode())
-")
-
-# Patch the broker config secret
-oc patch secret mcp-gateway-config -n mcp-gateway --type='json' \
-    -p="[{\"op\":\"replace\",\"path\":\"/data/config.yaml\",\"value\":\"${MERGED_B64}\"}]"
+./scripts/merge-virtualserver-config.sh
 ----
 
-NOTE: Without this merge step, the broker will log `failed to get virtual server ... not found` because it only reads from `mcp-gateway/mcp-gateway-config`, not from `mcp-system/mcp-gateway-config`.
+The script reads both secrets, copies the `virtualServers` list into the broker's config, and patches it back. Pass a namespace argument if your broker is not in `mcp-gateway`.
+
+[source]
+----
+merged 2 virtual server(s) into mcp-gateway/mcp-gateway-config
+now restart the broker: oc rollout restart deployment/mcp-gateway -n mcp-gateway
+----
+
+NOTE: Without this merge the broker logs `failed to get virtual server ... not found` and every request carrying an `X-Mcp-Virtualserver` header fails, even though the `MCPVirtualServer` resources look healthy.
+
+WARNING: This merge is not permanent. The controller rewrites the broker's config secret whenever an `MCPServerRegistration` changes, which can drop the merged `virtualServers` list. Re-run the script (and restart the broker) after registering or removing MCP servers.
 
 === Step 4: Restart the Broker
 

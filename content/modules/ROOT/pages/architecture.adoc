@@ -2,30 +2,30 @@
 
 This page explains how {mcp-gw} works under the hood - what each component does and how a request travels from an AI agent through the gateway to an MCP server and back.
 
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
-
 == Component Overview
 
-{mcp-gw} is built from three components, each with a distinct responsibility:
+{mcp-gw} has three distinct *responsibilities*, but they are not three separate deployments. The broker and the router are two ports on *one container*; only the controller is a separate pod.
 
 [cols="1,2,3", options="header"]
 |===
 | Component | Role | Details
 
 | *MCP Broker*
-| Default backend at `/mcp`
+| Port `8080` of the broker-router pod; default backend at `/mcp`
 | Handles `initialize` and `tools/list` requests. Connects to all configured MCP servers, discovers their tools, and returns an aggregated tool list with prefixes. Caches the tool list and brokers SSE notifications between clients and servers.
 
 | *MCP Router*
-| Envoy ext_proc filter
+| Port `50051` of the *same* pod; Envoy `ext_proc` filter
 | Intercepts `tools/call` requests via Envoy external processing. Parses the tool name to determine the target server based on prefix, sets routing headers (`x-mcp-servername`, `x-mcp-toolname`, `:authority`), strips the prefix before forwarding, and manages backend MCP sessions.
 
 | *MCP Gateway Controller*
-| Kubernetes controller
-| Watches `MCPServerRegistration` custom resources, resolves `HTTPRoute` references to backend URLs, generates a ConfigMap with the server configuration consumed by both the broker and router, and triggers reloads when the configuration changes.
+| Separate pod, one per cluster
+| Watches `MCPGatewayExtension`, `MCPServerRegistration` and `MCPVirtualServer`. Creates the broker-router Deployment and the `ext_proc` EnvoyFilter, resolves `HTTPRoute` references to backend URLs, and writes the `mcp-gateway-config` *Secret* that the broker reads at startup.
 |===
+
+NOTE: The configuration is a `Secret` named `mcp-gateway-config`, not a ConfigMap, and the broker only reads it *at startup*. That is why registering a new MCP server requires a broker restart.
+
+The practical consequence of broker and router sharing a pod is that a single `oc rollout restart deployment/mcp-gateway` restarts both, and a crash takes out both the `/mcp` endpoint and tool-call routing at once.
 
 == Request Flow
 

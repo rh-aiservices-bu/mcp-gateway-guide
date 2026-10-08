@@ -2,45 +2,111 @@
 
 Create the MCPGatewayExtension to connect the {mcp-gw} to your Gateway listener.
 
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
-
 == Overview
 
-The `MCPGatewayExtension` custom resource tells the MCP Gateway controller which Gateway listener to manage. Without it, `MCPServerRegistration` resources will remain in `NotReady` status because the controller does not know which Gateway to configure.
+The `MCPGatewayExtension` tells the MCP Gateway controller which Gateway listener to extend with MCP protocol support. This is the resource that *brings the data plane into existence*: until it exists there is no broker pod, and `MCPServerRegistration` resources stay `NotReady` because the controller does not know which Gateway to configure.
 
-Key configuration:
+Applying it triggers the controller to create three things:
 
-* `targetRef` - Points to the Gateway resource and specific listener (via `sectionName`)
-* `httpRouteManagement: Enabled` - The controller automatically creates and manages HTTPRoutes for the MCP broker
-* `sectionName` - Must match the listener name on the Gateway (in our case, `mcp`)
+. The *broker-router Deployment* - the pod you did not see in xref:01-prerequisites.adoc[Phase 1], created in this extension's namespace
+. An *EnvoyFilter* registering the router as an Envoy `ext_proc` filter on the target Gateway
+. An *HTTPRoute* sending `/mcp` traffic on the target listener to the broker (when `httpRouteManagement: Enabled`)
+
+Key fields used here:
+
+* `targetRef` - the Gateway to extend, plus the listener via `sectionName` (must match a listener name on the Gateway; here `mcp`)
+* `httpRouteManagement: Enabled` - let the controller own the HTTPRoute
+
+The CRD has several other fields worth knowing about:
+
+[cols="1,3", options="header"]
+|===
+| Field | Purpose
+
+| `privateHost`
+| Overrides the internal host the broker uses to hair-pin requests back through the Gateway. Defaults to `<gateway>-istio.<ns>.svc.cluster.local:<port>` - see <<privatehost>>.
+
+| `publicHost`
+| Overrides the public host derived from the listener hostname. Needed when the listener uses a wildcard and you need one specific host.
+
+| `oauthProtectedResource`
+| Serves OAuth metadata at `/.well-known/oauth-protected-resource`. Used in xref:07-authentication.adoc[Phase 7].
+
+| `sessionStore`
+| References a Secret with `CACHE_CONNECTION_STRING` for Redis-backed sessions. Without it, sessions live in the broker's memory and are lost on restart - relevant if you scale the broker beyond one replica.
+
+| `backendPingIntervalSeconds`
+| How often the broker health-checks upstream MCP servers.
+|===
 
 == Installation
 
-=== Step 1: Create the MCPGatewayExtension
-
-[source,bash]
-----
-oc apply -f manifests/03-mcp-gateway-extension/mcpgatewayextension.yaml
-----
-
-=== Step 2: Create the ReferenceGrant
-
-Since the MCPGatewayExtension is in the `mcp-gateway` namespace (same as the Gateway), a ReferenceGrant is not strictly required. However, if you move the extension to a different namespace, you need a ReferenceGrant in the Gateway's namespace:
-
-[source,bash]
-----
-oc apply -f manifests/03-mcp-gateway-extension/referencegrant.yaml
-----
-
-=== Step 3: Apply All Resources
-
-Or apply everything at once with Kustomize:
+Apply everything at once with Kustomize:
 
 [source,bash]
 ----
 oc apply -k manifests/03-mcp-gateway-extension/
+----
+
+That single command creates both resources described below. The individual manifests are documented here so you know what you just applied - you do not need to apply them separately.
+
+=== The MCPGatewayExtension
+
+`manifests/03-mcp-gateway-extension/mcpgatewayextension.yaml` binds the broker to the Gateway's `mcp` listener. Applying it is what causes the controller to create the broker Deployment.
+
+=== The ReferenceGrant
+
+`manifests/03-mcp-gateway-extension/referencegrant.yaml` authorises the extension to reference a Gateway in another namespace.
+
+[cols="1,2", options="header"]
+|===
+| Your topology | Is the ReferenceGrant needed?
+
+| Extension and Gateway in the same namespace (Track A default: both in `mcp-gateway`)
+| No. It is applied anyway so the manifests work unchanged if you later split them.
+
+| Extension and Gateway in *different* namespaces (Track B: Gateway in `openshift-ingress`)
+| *Yes, mandatory.* Without it the extension never becomes Ready.
+|===
+
+IMPORTANT: A ReferenceGrant must live in the namespace of the resource being *referenced* - that is, the Gateway's namespace, not the extension's. On Track B that means creating it in `openshift-ingress`:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-mcp-extension
+  namespace: ${GATEWAY_NAMESPACE}
+spec:
+  from:
+    - group: mcp.kuadrant.io
+      kind: MCPGatewayExtension
+      namespace: mcp-gateway
+  to:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+EOF
+----
+
+[#privatehost]
+=== Setting privateHost on a non-istio GatewayClass
+
+The extension's `privateHost` field tells the broker which address to dial when it re-enters the Gateway on the `mcps` listener. Left unset, it defaults to a name derived from the `istio` GatewayClass convention (`<gateway-name>-istio.<namespace>.svc.cluster.local`).
+
+WARNING: On Track B that default points at a Service that *does not exist*, and every `MCPServerRegistration` will stay `NotReady` with connection errors. Set it explicitly to the gateway proxy Service.
+
+Find the real Service and set the field:
+
+[source,bash]
+----
+oc get svc -n "$GATEWAY_NAMESPACE" \
+  -l gateway.networking.k8s.io/gateway-name=mcp-gateway
+
+oc patch mcpgatewayextension mcp-extension -n mcp-gateway --type=merge -p "{
+  \"spec\": {\"privateHost\": \"<service-name>.${GATEWAY_NAMESPACE}.svc.cluster.local:8080\"}
+}"
 ----
 
 == Verification
@@ -53,13 +119,53 @@ oc wait mcpgatewayextension/mcp-extension -n mcp-gateway \
   --for=condition=Ready --timeout=60s
 ----
 
-=== Check that the HTTPRoute was Created
+=== Confirm the Broker Appeared
 
-With `httpRouteManagement: Enabled`, the controller creates an HTTPRoute for the MCP broker:
+This is the moment the data plane is created. The broker pod now exists:
+
+[source,bash]
+----
+oc get pods -n mcp-gateway -l app.kubernetes.io/name=mcp-gateway
+----
+
+[source]
+----
+NAME                           READY   STATUS    RESTARTS   AGE
+mcp-gateway-7d788b7b85-zpnnw   1/1     Running   0          17s
+----
+
+That single container is both the broker and the router. You can see the two ports:
+
+[source,bash]
+----
+oc get deploy mcp-gateway -n mcp-gateway \
+  -o jsonpath='{.spec.template.spec.containers[*].ports}'
+----
+
+[source]
+----
+[{"containerPort":8080,"name":"http"},{"containerPort":50051,"name":"grpc"},{"containerPort":8181,"name":"config"}]
+----
+
+`8080` serves the MCP protocol, `50051` serves gRPC for the Envoy `ext_proc` filter, `8181` serves config.
+
+=== Check the HTTPRoute and EnvoyFilter were Created
+
+With `httpRouteManagement: Enabled`, the controller creates an HTTPRoute for the broker, plus the EnvoyFilter that wires the router into Envoy:
 
 [source,bash]
 ----
 oc get httproutes -n mcp-gateway
+oc get envoyfilter -n "$GATEWAY_NAMESPACE"
+----
+
+[source]
+----
+NAME                HOSTNAMES                       AGE
+mcp-gateway-route   ["mcp.apps.<cluster-domain>"]   18s
+
+NAME                               AGE
+mcp-ext-proc-mcp-gateway-gateway   12s
 ----
 
 === Check Controller Logs
@@ -90,7 +196,7 @@ manifests/03-mcp-gateway-extension/
 
 == Related Issues
 
-* link:https://issues.redhat.com/browse/OSDOCS-21435[OSDOCS-21435] (was link:https://issues.redhat.com/browse/CONNLINK-1498[CONNLINK-1498]) - privateHost default assumes Istio GatewayClass but docs use openshift-default. This guide uses `gatewayClassName: istio` where the default privateHost works correctly.
+* link:https://issues.redhat.com/browse/OSDOCS-21435[OSDOCS-21435] (was link:https://issues.redhat.com/browse/CONNLINK-1498[CONNLINK-1498]) - privateHost default assumes the Istio GatewayClass but the docs use openshift-default. On Track A the default works; on Track B you must set `privateHost` explicitly, as described in <<privatehost>>.
 * link:https://issues.redhat.com/browse/OSDOCS-21437[OSDOCS-21437] (was link:https://issues.redhat.com/browse/CONNLINK-1500[CONNLINK-1500]) - Auto-generated HTTPRoute example shows wrong namespace in parentRefs. This guide creates HTTPRoutes with the correct gateway namespace.
 
 == References

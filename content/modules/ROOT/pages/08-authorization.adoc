@@ -2,10 +2,6 @@
 
 Configure tool-level authorization for the {mcp-gw} using CEL expressions and JWT `resource_access` claims.
 
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
-
 == Overview
 
 After configuring authentication (Phase 7), you can add fine-grained tool-level authorization. The {mcp-gw} broker injects `x-mcp-toolname` and `x-mcp-servername` headers when forwarding requests to backend MCP servers via the internal `mcps` listener. An AuthPolicy on that listener evaluates CEL expressions against JWT claims to enforce access control.
@@ -97,12 +93,22 @@ oc wait authpolicy/mcp-authz-policy -n mcp-gateway \
 
 === Step 2: Verify Both Policies Exist
 
+`oc get authpolicy` has no status column, so ask for the condition explicitly:
+
 [source,bash]
 ----
-oc get authpolicy -n mcp-gateway
+oc get authpolicy -n mcp-gateway \
+  -o custom-columns='NAME:.metadata.name,ENFORCED:.status.conditions[?(@.type=="Enforced")].status'
 ----
 
-You should see both `mcp-auth-policy` and `mcp-authz-policy` with Enforced status.
+[source]
+----
+NAME               ENFORCED
+mcp-auth-policy    True
+mcp-authz-policy   True
+----
+
+Both must be `True`. A plain `oc get authpolicy -n mcp-gateway` only prints `NAME` and `AGE`, which tells you nothing about enforcement.
 
 === Key CEL Expression
 
@@ -200,13 +206,117 @@ curl -sk -X POST "https://${MCP_HOSTNAME}/mcp" \
 
 This should succeed because the restricted user has `tool:greet` role on `mcp-test/test-server1`.
 
+=== Expected Results Matrix
+
+Authorization applies identically to in-cluster and external servers. Running all four combinations is the quickest way to prove the policy is actually doing something:
+
+[cols="1,1,1,2", options="header"]
+|===
+| User | Tool | Result | Why
+
+| `mcp`
+| `risk_calculate_dti`
+| Allowed
+| Has `tool:calculate_dti` on `mcp-test/risk-server`
+
+| `restricted`
+| `risk_calculate_dti`
+| Denied
+| No roles on `mcp-test/risk-server`
+
+| `restricted`
+| `test1_greet`
+| Allowed
+| Has `tool:greet` on `mcp-test/test-server1`
+
+| `mcp`
+| `dw_read_wiki_structure`
+| Allowed
+| Has `tool:read_wiki_structure` on `mcp-test/external-server`
+
+| `restricted`
+| `dw_read_wiki_structure`
+| Denied
+| No roles on `mcp-test/external-server`
+|===
+
+A denial returns the JSON-RPC error defined in the policy's `response.unauthorized` block:
+
+[source,json]
+----
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32600,
+    "message": "Forbidden: Insufficient permissions for this tool."
+  }
+}
+----
+
+[#adding-a-server]
+== Authorizing a Newly Registered Server
+
+Registering an MCP server in xref:04-register-mcp-servers.adoc[Phase 4] does *not* grant anyone access to its tools. Until {rhbk} knows about the server, no token carries roles for it and every `tools/call` is denied. This is the single most common surprise after adding a server.
+
+For each new server you need three things in the realm:
+
+. A *resource-server client* whose `clientId` exactly matches the value the broker puts in the `x-mcp-servername` header - which is `<namespace>/<registration-name>`, for example `mcp-test/external-server`.
+. *Client roles* named `tool:<unprefixed-tool-name>`. Note the tool name *without* the registration prefix: the tool exposed as `dw_read_wiki_structure` needs the role `tool:read_wiki_structure`.
+. A *clientScopeMapping* granting those roles to the public `mcp-gateway` client, otherwise they never appear in the `resource_access` claim.
+
+The declarative way is to add them to `manifests/06-deploy-keycloak/keycloak/keycloakrealmimport-mcp.yaml`, which is how `mcp-test/external-server` is defined:
+
+[source,yaml]
+----
+clients:
+  - clientId: mcp-test/external-server
+    name: External MCP Server Resource
+    enabled: true
+    bearerOnly: true
+    publicClient: false
+    protocol: openid-connect
+    defaultClientScopes: ["openid"]
+
+users:
+  - username: mcp
+    clientRoles:
+      mcp-test/external-server:
+        - tool:read_wiki_structure
+        - tool:read_wiki_contents
+        - tool:ask_wiki_question
+
+clientScopeMappings:
+  mcp-test/external-server:
+    - client: mcp-gateway
+      roles:
+        - tool:read_wiki_structure
+        - tool:read_wiki_contents
+        - tool:ask_wiki_question
+----
+
+IMPORTANT: `KeycloakRealmImport` does not update an existing realm. To pick up changes you must delete the realm and re-import it, as described in xref:06-deploy-keycloak.adoc[Phase 6]. On a live system, add clients and roles through the Keycloak admin console or admin API instead.
+
+Confirm the roles reach the token before testing a tool call:
+
+[source,bash]
+----
+curl -sk -X POST "${KEYCLOAK_ISSUER}/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=mcp-gateway&username=mcp&password=mcp&scope=openid groups roles" \
+  | jq -r '.access_token' | cut -d'.' -f2 \
+  | python3 -c 'import sys,base64,json; s=sys.stdin.read().strip(); print(json.dumps(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4)))["resource_access"], indent=2))'
+----
+
+If the new server is absent from `resource_access`, the `clientScopeMappings` entry is missing or misspelled.
+
 == Monitoring
 
 === Check AuthPolicy Status
 
 [source,bash]
 ----
-oc get authpolicy -n mcp-gateway
+oc get authpolicy -n mcp-gateway \
+  -o custom-columns='NAME:.metadata.name,ENFORCED:.status.conditions[?(@.type=="Enforced")].status'
 ----
 
 === Check Authorino Logs

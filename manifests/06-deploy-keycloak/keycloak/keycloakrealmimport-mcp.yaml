@@ -71,6 +71,18 @@ spec:
         protocol: openid-connect
         defaultClientScopes:
           - openid
+      # Resource server for the external, off-cluster MCP server registered in
+      # Phase 4. The clientId must match the x-mcp-servername header the broker
+      # sends, which is "<namespace>/<MCPServerRegistration name>".
+      - clientId: mcp-test/external-server
+        name: External MCP Server Resource
+        enabled: true
+        bearerOnly: true
+        publicClient: false
+        serviceAccountsEnabled: false
+        protocol: openid-connect
+        defaultClientScopes:
+          - openid
     clientScopes:
       - name: groups
         protocol: openid-connect
@@ -135,6 +147,12 @@ spec:
             - "tool:assess_income_stability"
             - "tool:assess_asset_sufficiency"
             - "tool:generate_risk_recommendation"
+          # Role names drop the registration prefix: the tool exposed as
+          # dw_read_wiki_structure needs the role tool:read_wiki_structure.
+          mcp-test/external-server:
+            - "tool:read_wiki_structure"
+            - "tool:read_wiki_contents"
+            - "tool:ask_wiki_question"
       - username: restricted
         email: restricted@test.com
         firstName: restricted
@@ -170,3 +188,9 @@ spec:
             - "tool:assess_income_stability"
             - "tool:assess_asset_sufficiency"
             - "tool:generate_risk_recommendation"
+      mcp-test/external-server:
+        - client: mcp-gateway
+          roles:
+            - "tool:read_wiki_structure"
+            - "tool:read_wiki_contents"
+            - "tool:ask_wiki_question"

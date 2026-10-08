@@ -1,10 +1,6 @@
 = Phase 4: Register MCP Servers
 
-Deploy and register two MCP servers with the {mcp-gw}.
-
-TIP: All file paths and `oc apply` commands in this guide are relative to the link:{repo-url}[mcp-gateway-guide] repository root.
-
-IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation].
+Deploy and register MCP servers with the {mcp-gw}, including one hosted outside the cluster.
 
 == Overview
 
@@ -13,22 +9,29 @@ To connect an MCP server to {mcp-gw}, you need two things for each server:
 1. An `HTTPRoute` that routes traffic from the Gateway to your MCP server
 2. An `MCPServerRegistration` that tells the gateway about the server and assigns a tool prefix
 
-This guide deploys two MCP servers to demonstrate different use cases:
+This guide registers three MCP servers, chosen to cover the cases you are likely to hit in practice:
 
-[cols="1,2,1,1", options="header"]
+[cols="1,2,1,2", options="header"]
 |===
-| Server | Description | Prefix | Tools
+| Server | Description | Prefix | Case it demonstrates
 
 | Test Server
 | Basic test tools (greeting, headers echo, time, math)
 | `test1_`
-| 5
+| The simplest in-cluster server
 
 | Risk Server
 | Mortgage risk assessment calculations
 | `risk_`
-| 6
+| A second in-cluster server, showing prefix-based aggregation
+
+| External Server
+| Public DeepWiki MCP server, hosted outside the cluster
+| `dw_`
+| An *off-cluster* server reached over TLS - see <<external-servers>>
 |===
+
+NOTE: Tool counts are deliberately not listed here. The upstream test images add tools over time, so any fixed number goes stale - at the time of writing the test server exposes 8 tools and the risk server 6. Trust `oc get mcpsr -A` over any number printed in a guide.
 
 == Installation
 
@@ -39,9 +42,7 @@ This guide deploys two MCP servers to demonstrate different use cases:
 oc apply -f manifests/04-register-mcp-servers/namespace.yaml
 ----
 
-=== Step 2: Deploy the MCP Servers
-
-Deploy both MCP servers:
+=== Step 2: Deploy the In-Cluster MCP Servers
 
 [source,bash]
 ----
@@ -77,7 +78,17 @@ oc apply -f manifests/04-register-mcp-servers/mcpsr-test.yaml
 oc apply -f manifests/04-register-mcp-servers/mcpsr-risk.yaml
 ----
 
-=== Step 5: Restart the Broker
+=== Step 5: Register the External MCP Server
+
+[source,bash]
+----
+oc apply -k manifests/04-register-mcp-servers/external-server/
+oc wait pod -n mcp-test -l app=external-mcp-proxy --for=condition=Ready --timeout=120s
+----
+
+This adds an off-cluster MCP server. Read <<external-servers>> before or after running it - the mechanism is not obvious and the reasoning matters if you are adapting it to your own server.
+
+=== Step 6: Restart the Broker
 
 The broker reads server configuration from the `mcp-gateway-config` secret at startup. After the controller writes new server registrations, the broker needs a restart to load them:
 
@@ -102,12 +113,15 @@ Expected output:
 
 [source]
 ----
-NAMESPACE   NAME           PREFIX   TARGET               READY   TOOLS
-mcp-test    test-server1   test1_   test-server1-route   True    5
-mcp-test    risk-server    risk_    risk-server-route    True    6
+NAMESPACE  NAME              PREFIX  TARGET                 PATH  READY  TOOLS  CATEGORY            CREDENTIALS
+mcp-test   external-server   dw_     external-server-route  /mcp  True   3      ["documentation"]
+mcp-test   risk-server       risk_   risk-server-route      /mcp  True   6      ["uncategorised"]
+mcp-test   test-server1      test1_  test-server1-route     /mcp  True   8      ["uncategorised"]
 ----
 
-NOTE: If registrations show `Ready: False` with `TOOLS: 0`, the broker has not yet validated the backend servers. Wait a few seconds and check again - the broker validates servers periodically after restart.
+What matters is `READY: True` and a non-zero `TOOLS` count for every row.
+
+NOTE: Immediately after creating the registrations they will show `READY: False` with an empty `TOOLS` column. That is normal - the broker only picks up new servers on restart, which is what Step 5 does. If they are still `False` a minute after the restart, check the broker logs.
 
 === Check Controller Logs
 
@@ -123,7 +137,120 @@ oc logs -n mcp-gateway deployment/mcp-gateway-controller --tail=20
 oc logs -n mcp-gateway deployment/mcp-gateway --tail=30 | grep -i "tool\|server"
 ----
 
-You should see `Server validation completed` with `healthyServers=2`.
+You should see `Server validation completed` with `healthyServers=3`.
+
+TIP: The broker logs repeated `unable to check conflict, tool id is missing` errors at `ERROR` level during startup. These are harmless in this setup and do not prevent tools from registering - do not chase them if your registrations are otherwise `Ready`.
+
+[#external-servers]
+== Registering an External MCP Server
+
+The common real-world case is an MCP server that is *not* running in your cluster - a vendor-hosted endpoint, a server on a data platform, or a public one. This needs a workaround, so it is worth understanding why.
+
+=== Why you cannot just point at a URL
+
+`MCPServerRegistration.spec.targetRef` accepts *only* an `HTTPRoute`, and Gateway API `backendRefs` accept only Services. There is no field anywhere for an absolute external URL.
+
+The natural next thought is an `ExternalName` Service. *This does not work.* The controller resolves the external hostname correctly but always builds a *plaintext* URL for the broker, reusing the Service port:
+
+[source,bash]
+----
+oc get secret mcp-gateway-config -n mcp-gateway -o jsonpath='{.data.config\.yaml}' | base64 -d
+----
+
+[source,yaml]
+----
+  hostname: mcp.deepwiki.com
+  name: mcp-test/deepwiki-extname
+  url: http://mcp.deepwiki.com:443/mcp     # <-- HTTP against a TLS port
+----
+
+The registration never becomes ready:
+
+[source]
+----
+message: 'failed to initialize client for upstream mcp-test/deepwiki-extname :
+  transport error: server returned 4xx for initialize POST, likely a legacy SSE server'
+----
+
+So any *TLS-protected* external MCP server - which in practice means all of them - is unreachable this way.
+
+=== The pattern that works: a TLS-origination proxy
+
+Put a tiny reverse proxy in the cluster. The broker speaks plain HTTP to the proxy over `*.mcp.local`, exactly as it does for a local server, and the proxy originates TLS to the remote endpoint. From the Gateway's point of view the external server is now just another in-cluster Service.
+
+[source]
+----
+broker --http--> Gateway (mcps listener) --http--> nginx proxy --HTTPS--> remote MCP server
+----
+
+`manifests/04-register-mcp-servers/external-server/` implements this with four pieces: a ConfigMap holding the nginx config, the proxy Deployment and Service, the HTTPRoute on `external-server.mcp.local`, and the `MCPServerRegistration`.
+
+To point it at your own server, change these lines in `proxy-configmap.yaml`:
+
+[source,nginx]
+----
+proxy_pass       https://mcp.deepwiki.com;
+proxy_set_header Host mcp.deepwiki.com;
+proxy_ssl_name   mcp.deepwiki.com;
+----
+
+=== Two things that will bite you
+
+*1. The broker forwards the end user's token upstream.*
+
+The broker passes the client's `Authorization` header through to the backend MCP server. Against an external third party this means your users' Keycloak JWTs are sent to someone else's service, and that service will usually reject them. DeepWiki answers with:
+
+[source]
+----
+Authentication is not allowed on the public DeepWiki endpoint (mcp.deepwiki.com).
+----
+
+The proxy config therefore clears it:
+
+[source,nginx]
+----
+proxy_set_header Authorization "";
+----
+
+WARNING: Treat this as a security requirement, not a functional workaround. Any external MCP server registered without stripping the header receives bearer tokens scoped to your identity provider.
+
+If the remote server needs its *own* credential, inject that instead - either a literal header in the proxy, or `spec.credentialRef` on the registration, which the broker uses for tool discovery and session management but never injects into client `tools/call` requests.
+
+*2. Server-sent events need buffering disabled.*
+
+MCP streams responses as SSE. With default nginx buffering the client sees nothing until the stream closes, which looks like a hang:
+
+[source,nginx]
+----
+proxy_buffering off;
+proxy_request_buffering off;
+proxy_http_version 1.1;
+proxy_set_header Connection "";
+----
+
+=== Useful registration fields for external servers
+
+[cols="1,3", options="header"]
+|===
+| Field | Use
+
+| `path`
+| The remote MCP endpoint path. Defaults to `/mcp`; set it for servers using `/api/mcp`, `/v1/mcp` and so on.
+
+| `credentialRef`
+| Secret holding a token the *broker* uses for tool discovery. The Secret must carry the label `mcp.kuadrant.io/secret=true`.
+
+| `caCertSecretRef`
+| CA bundle for verifying a remote server with a private or internal CA.
+
+| `userSpecificList`
+| Set to `Enabled` when the remote server returns a different tool list per user, so the broker stops caching one shared list.
+
+| `category` / `hint` / `tags`
+| Metadata surfaced by the `discover_tools` meta-tool. Worth setting once you aggregate many servers, so agents can narrow the tool set.
+|===
+
+NOTE: Authorization for external servers works exactly as for local ones, but the server needs a matching resource-server client in {rhbk}. The realm imported in xref:06-deploy-keycloak.adoc[Phase 6] already includes `mcp-test/external-server`; see xref:08-authorization.adoc#adding-a-server[Authorizing a Newly Registered Server] for adding your own.
 
 == About the MCP Servers
 
@@ -136,6 +263,8 @@ A simple MCP server for basic validation. Uses the image `ghcr.io/kuadrant/mcp-g
 * `test1_add_tool` - Adds two numbers
 * `test1_slow` - Simulates a slow operation
 * `test1_time` - Returns the current server time
+
+The image also ships additional tools (`test1_checksum`, `test1_show_widget`, `test1_show_external_widget` at the time of writing). The exact set depends on the image tag, so list them with `tools/list` rather than relying on this page.
 
 === Risk Server
 
@@ -164,6 +293,13 @@ manifests/04-register-mcp-servers/
     kustomization.yaml
     deployment.yaml
     service.yaml
+  external-server/                 <-- off-cluster MCP server
+    kustomization.yaml
+    proxy-configmap.yaml           <-- nginx TLS-origination config
+    proxy-deployment.yaml
+    proxy-service.yaml
+    httproute-external.yaml
+    mcpsr-external.yaml
   httproute-test.yaml
   httproute-risk.yaml
   mcpsr-test.yaml
