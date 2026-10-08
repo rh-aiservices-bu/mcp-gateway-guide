@@ -93,7 +93,7 @@ oc wait keycloak/keycloak -n mcp-test \
 
 The RHBK operator provisions a StatefulSet and Services for the Keycloak instance. This may take a few minutes on the first deployment.
 
-IMPORTANT: The operator does *not* create an OpenShift Route. With RHBK 26.4 it creates a plain `Ingress` named `keycloak-ingress`, and because this guide's `Keycloak` CR sets `hostname.strict: false` with no explicit `hostname`, that Ingress has *no host* - so OpenShift cannot derive a Route from it and Keycloak ends up unreachable. This guide therefore sets `spec.ingress.enabled: false` and ships its own Route (`manifests/06-deploy-keycloak/keycloak/route.yaml`), applied by the kustomization in Step 2. That also gives the Route a predictable name, `keycloak`, which every later phase depends on.
+IMPORTANT: The operator does *not* create an OpenShift Route. With RHBK 26.4 it creates a plain `Ingress` named `keycloak-ingress`, and because this guide's `Keycloak` CR sets `hostname.strict: false` with no explicit `hostname`, that Ingress has *no host* - so OpenShift cannot derive a Route from it and Keycloak ends up unreachable. This guide therefore sets `spec.ingress.enabled: false` and ships its own Route (`manifests/06-deploy-keycloak/keycloak/keycloak-route.yaml`), applied by the kustomization in Step 2. That also gives the Route a predictable name, `keycloak`, which every later phase depends on.
 
 === Step 5: Verify the Realm Import
 
@@ -229,7 +229,7 @@ manifests/06-deploy-keycloak/
     keycloak-db-secret.yaml          <-- PostgreSQL credentials
     keycloak-postgresql.yaml         <-- PostgreSQL Deployment + Service
     keycloak.yaml                    <-- RHBK Keycloak CR (ingress disabled)
-    route.yaml                       <-- Explicit edge Route named "keycloak"
+    keycloak-route.yaml              <-- Explicit edge Route named "keycloak"
     keycloakrealmimport-mcp.yaml     <-- RHBK realm import CR
 ----
 

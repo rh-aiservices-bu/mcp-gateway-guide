@@ -1,13 +1,43 @@
-kind: Route
+# Explicit Route for the RHBK instance.
+#
+# Originally contributed in PR #3 (strangiato), which found that Phase 6's
+# "Get the Keycloak URL" step fails. Extended here with an explicit namespace
+# and the reasoning behind it.
+#
+# The RHBK operator does NOT create an OpenShift Route. It creates a plain
+# Ingress named "keycloak-ingress", and when spec.hostname.hostname is unset
+# that Ingress has no host, so OpenShift's ingress-to-route controller cannot
+# derive a Route from it. The result is no reachable Keycloak URL at all, and
+# because KEYCLOAK_URL feeds the issuer in both AuthPolicies, the failure only
+# becomes visible two phases later as unexplained 401s.
+#
+# We therefore disable the operator's Ingress (spec.ingress.enabled: false in
+# keycloak.yaml) and manage this Route ourselves. Owning it also guarantees the
+# deterministic name "keycloak", which every later phase relies on:
+#   oc get route keycloak -n mcp-test -o jsonpath='{.spec.host}'
+#
+# spec.host is deliberately omitted: OpenShift assigns
+# <name>-<namespace>.<cluster-ingress-domain>, so this manifest stays portable
+# across clusters. Keycloak runs with hostname.strict: false and
+# proxy.headers: xforwarded, so it derives issuer URLs from the forwarded Host
+# header and matches whatever host the router assigns.
 apiVersion: route.openshift.io/v1
+kind: Route
 metadata:
   name: keycloak
+  # Explicit, so the manifest applies correctly even when the kustomization is
+  # invoked without "-n mcp-test".
+  namespace: mcp-test
+  labels:
+    app: keycloak
 spec:
   to:
     kind: Service
     name: keycloak-service
     weight: 100
   port:
+    # Named port rather than 8080, so this keeps working if the operator
+    # renumbers the Service. keycloak-service exposes "http" and "management".
     targetPort: http
   tls:
     termination: edge
