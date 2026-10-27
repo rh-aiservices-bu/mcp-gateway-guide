@@ -23,7 +23,7 @@ cd mcp-gateway-guide
 ## Building the Docs
 
 ```bash
-npm install -g @antora/cli@3.1 @antora/site-generator@3.1 @andrew-jones/antora-tabs-extension
+npm install -g @antora/cli@3.1 @antora/site-generator@3.1 @andrew-jones/antora-tabs-extension @antora/lunr-extension
 antora generate site.yml
 # open www/index.html
 ```
