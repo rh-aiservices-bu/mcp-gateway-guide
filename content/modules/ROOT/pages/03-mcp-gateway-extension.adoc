@@ -285,6 +285,91 @@ If you need custom HTTP headers (such as CORS headers), you can disable automati
 
 See the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#creating-a-custom-httproute-for-the-mcp-gateway_mcp-gateway-install[Custom HTTPRoute documentation] for details.
 
+[#multiple-instances]
+== Running More Than One MCP Gateway
+
+You can run several MCP Gateways in one cluster. Each one is a separate `Gateway` plus its own `MCPGatewayExtension`, and `targetRef` is required, so there is exactly one extension per Gateway listener.
+
+The rest of this guide uses a single instance (`mcp-gateway` / `mcp-extension`), so if you add a second one, two things need attention.
+
+=== What decides which gateway a server belongs to
+
+This is the part that is easy to get wrong. `MCPServerRegistration` has *no* field pointing at a Gateway or an extension. Its `targetRef` only accepts an `HTTPRoute`:
+
+[source,bash]
+----
+oc get crd mcpserverregistrations.mcp.kuadrant.io \
+  -o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.targetRef.properties.kind.enum}{"\n"}'
+----
+
+[source]
+----
+["HTTPRoute"]
+----
+
+So the binding is indirect, and the `HTTPRoute` is the only link in the chain you control:
+
+[source]
+----
+MCPServerRegistration --targetRef--> HTTPRoute --parentRefs--> Gateway <--targetRef-- MCPGatewayExtension
+----
+
+WARNING: `parentRefs` on the HTTPRoute is the *only* thing that selects the instance. Nothing on the registration says which gateway it joined, and a registration pointing at a route attached to the other Gateway still reports `Ready`. Its tools simply show up on the other endpoint, or on none.
+
+Print the chain for every registration to see where each one actually landed:
+
+[source,bash]
+----
+for r in $(oc get mcpsr -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{" "}{end}'); do
+  ns="${r%%/*}"; name="${r##*/}"
+  route=$(oc get mcpsr "$name" -n "$ns" -o jsonpath='{.spec.targetRef.name}')
+  rns=$(oc get mcpsr "$name" -n "$ns" -o jsonpath='{.spec.targetRef.namespace}')
+  rns="${rns:-$ns}"
+  gw=$(oc get httproute "$route" -n "$rns" \
+    -o jsonpath='{range .spec.parentRefs[*]}{.namespace}/{.name}{" "}{end}')
+  echo "$ns/$name -> $route -> gateway: $gw"
+done
+----
+
+[source]
+----
+mcp-test/risk-server -> risk-server-route -> gateway: mcp-gateway/mcp-gateway
+mcp-test/test-server1 -> test-server1-route -> gateway: mcp-gateway/mcp-gateway
+----
+
+If `targetRef.namespace` is left out of the registration it defaults to the registration's own namespace, which is why the loop above fills it in.
+
+=== Give each instance its own namespace
+
+The broker objects do *not* take their name from the extension. With an extension called `mcp-extension` the controller creates:
+
+[source]
+----
+deployment/mcp-gateway            ownerRef -> MCPGatewayExtension/mcp-extension
+service/mcp-gateway
+secret/mcp-gateway-config
+----
+
+The name `mcp-gateway` is fixed. Only the EnvoyFilter is derived from the Gateway name (`mcp-ext-proc-<gateway>-gateway`), and it carries `mcp.kuadrant.io/extension-name` and `mcp.kuadrant.io/extension-namespace` labels so you can tell the filters apart:
+
+[source,bash]
+----
+oc get envoyfilter -A \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.mcp\.kuadrant\.io/extension-namespace}{"/"}{.metadata.labels.mcp\.kuadrant\.io/extension-name}{"\n"}{end}'
+----
+
+[source]
+----
+mcp-ext-proc-mcp-gateway-gateway        mcp-gateway/mcp-extension
+data-science-authn-filter               /
+----
+
+The `-A` scope also lists EnvoyFilters that have nothing to do with the MCP Gateway, like the one OpenShift AI installs above. Those come back with an empty label, which is how you tell them apart.
+
+NOTE: Because those three names are fixed, put each extension in its own namespace. Two extensions in the same namespace would both want `deployment/mcp-gateway` and `secret/mcp-gateway-config`. This is read from the naming and the owner references, not from a test with two extensions side by side, so treat it as the safe layout rather than a measured limit.
+
+Remember that `privateHost` is per extension too (see <<privatehost>>), so each instance points at its own gateway proxy Service.
+
 == Appendix
 
 === Directory Structure
