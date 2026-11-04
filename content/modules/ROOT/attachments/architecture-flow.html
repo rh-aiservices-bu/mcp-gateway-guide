@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP Gateway - Architecture &amp; Request Flow Visualizer</title>
+<link rel="stylesheet" href="https://noyitz.github.io/flowstory/templates/style.css">
+</head>
+<body>
+<button class="fs-theme-toggle" id="fs-theme">&#9790;</button>
+<div class="fs-title" id="fs-title"></div>
+<div class="fs-panel">
+  <div class="fs-flow-bar">
+    <select id="fs-flow-select"></select>
+    <button class="fs-start" id="fs-play">&#9654; Start</button>
+    <button id="fs-speed">1x</button>
+    <button id="fs-loop">&#8635; Loop</button>
+    <button class="fs-reset" id="fs-reset">Reset</button>
+  </div>
+  <div class="fs-steps" id="fs-steps">
+    <div class="fs-steps-title">Flow Steps</div>
+    <div id="fs-steps-container"></div>
+  </div>
+</div>
+<div id="fs-highlight-box" style="display:none;position:fixed;z-index:350;border-radius:10px;pointer-events:none"></div>
+<div id="fs-overlay" style="display:none;position:fixed;top:0;left:0;right:380px;bottom:0;z-index:300;background:rgba(0,0,0,0.6)">
+  <div id="fs-overlay-card" style="position:absolute;background:#161b22ee;border:1px solid #30363d;border-radius:14px;max-width:440px;padding:22px 26px;box-shadow:0 12px 40px rgba(0,0,0,0.5);transition:opacity .2s">
+    <button id="fs-overlay-close" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#8b949e;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:6px">&#10005;</button>
+    <div id="fs-overlay-accent" style="width:4px;height:24px;border-radius:2px;position:absolute;left:0;top:22px"></div>
+    <h2 id="fs-overlay-title" style="margin:0 0 6px;font-size:18px;color:#c9d1d9;font-family:system-ui"></h2>
+    <p id="fs-overlay-desc" style="margin:0 0 14px;font-size:13px;color:#8b949e;line-height:1.5;font-family:system-ui"></p>
+    <div id="fs-overlay-details" style="font-size:12px;font-family:'SF Mono',Menlo,monospace"></div>
+    <button id="fs-overlay-resume" style="margin-top:14px;padding:7px 20px;border:1px solid #3fb950;border-radius:8px;background:transparent;color:#3fb950;font-size:13px;cursor:pointer;font-family:system-ui">&#9654; Resume Flow</button>
+  </div>
+</div>
+<div class="fs-legend" id="fs-legend"></div>
+<canvas id="fs-canvas"></canvas>
+<script type="module">
+import { FlowStory } from 'https://noyitz.github.io/flowstory/src/index.js';
+
+const el = id => document.getElementById(id);
+
+const viz = new FlowStory(el('fs-canvas'), {
+  panelElement: document.querySelector('.fs-panel'),
+  flowSelect: el('fs-flow-select'),
+  playBtn: el('fs-play'),
+  speedBtn: el('fs-speed'),
+  loopBtn: el('fs-loop'),
+  resetBtn: el('fs-reset'),
+  stepsContainer: el('fs-steps-container'),
+  overlay: el('fs-overlay'),
+  overlayElement: el('fs-overlay'),
+  overlayCard: el('fs-overlay-card'),
+  overlayTitle: el('fs-overlay-title'),
+  overlayDesc: el('fs-overlay-desc'),
+  overlayDetails: el('fs-overlay-details'),
+  overlayAccent: el('fs-overlay-accent'),
+  overlayClose: el('fs-overlay-close'),
+  overlayResume: el('fs-overlay-resume'),
+  highlightBox: el('fs-highlight-box'),
+  title: el('fs-title'),
+  titleElement: el('fs-title'),
+  legend: el('fs-legend'),
+  legendElement: el('fs-legend'),
+  themeBtn: el('fs-theme')
+});
+
+window.__flowstory = viz;
+
+const diagram = {
+  "meta": {
+    "title": "MCP Gateway Architecture &amp; Request Flow",
+    "author": "mcp-gateway-guide"
+  },
+  "canvas": { "width": 1450, "height": 900 },
+  "nodes": {
+    "admin":  { "x": 0, "y": 120, "w": 110, "h": 50, "label": "Platform Eng.", "type": "icon" },
+    "client": { "x": 0, "y": 300, "w": 110, "h": 55, "label": "MCP Client", "type": "icon" },
+
+    "cluster": { "x": 118, "y": 20, "w": 1302, "h": 830, "type": "boundary", "labelAlign": "left", "label": "Kubernetes / OpenShift" },
+
+    "c_control": { "x": 130, "y": 60, "w": 430, "h": 200, "type": "container", "label": "Control Plane · discovery", "color": "#58a6ff" },
+    "c_gw":      { "x": 590, "y": 60, "w": 290, "h": 450, "type": "container", "label": "Gateway (Envoy) · filter chain", "color": "#f0883e" },
+    "c_mcp":     { "x": 910, "y": 60, "w": 290, "h": 450, "type": "container", "label": "MCP Gateway · one binary", "color": "#3fb950" },
+    "c_back":    { "x": 1230, "y": 60, "w": 160, "h": 450, "type": "container", "label": "MCP Servers", "color": "#d2a8ff" },
+    "c_policy":  { "x": 130, "y": 560, "w": 560, "h": 250, "type": "container", "label": "Connectivity Policy · Kuadrant", "color": "#ffa657" },
+    "c_idp":     { "x": 720, "y": 560, "w": 330, "h": 250, "type": "container", "label": "Identity Provider", "color": "#db61a2" },
+    "c_vault":   { "x": 1080, "y": 560, "w": 310, "h": 250, "type": "container", "label": "Credentials · token exchange", "color": "#39c5cf" },
+
+    "n_reg":       { "x": 155, "y": 105, "w": 185, "h": 44, "label": "MCPServerRegistration", "sublabel": "targetRef: HTTPRoute", "color": "#58a6ff", "fontSize": 11 },
+    "n_vsrv":      { "x": 155, "y": 157, "w": 185, "h": 40, "label": "MCPVirtualServer", "sublabel": "curated tool subset", "color": "#58a6ff", "fontSize": 12 },
+    "n_ctrl":      { "x": 360, "y": 105, "w": 175, "h": 44, "label": "Discovery Controller", "sublabel": "k8s controller", "color": "#58a6ff", "fontSize": 12 },
+    "n_cfg":       { "x": 360, "y": 157, "w": 175, "h": 40, "label": "config Secret", "sublabel": "broker + router", "color": "#58a6ff", "fontSize": 13 },
+    "n_httproute": { "x": 155, "y": 205, "w": 380, "h": 38, "label": "HTTPRoute per MCP server", "sublabel": "host: *.mcp.local · not DNS-resolvable", "color": "#58a6ff", "fontSize": 12 },
+
+    "n_lis_mcp":   { "x": 615, "y": 105, "w": 240, "h": 40, "label": "listener  mcp  (public)", "sublabel": "the only host clients know", "color": "#f0883e", "fontSize": 12 },
+    "n_extproc":   { "x": 615, "y": 160, "w": 240, "h": 44, "label": "1 · ext_proc filter", "sublabel": "INSERT_FIRST · BUFFERED body", "color": "#f0883e", "fontSize": 12 },
+    "n_wasm":      { "x": 615, "y": 212, "w": 240, "h": 44, "label": "2 · Kuadrant WASM", "sublabel": "INSERT_BEFORE ROUTER", "color": "#f0883e", "fontSize": 12 },
+    "n_envoyrt":   { "x": 615, "y": 264, "w": 240, "h": 44, "label": "3 · Envoy Router", "sublabel": "picks the upstream cluster", "color": "#f0883e", "fontSize": 12 },
+    "n_lis_mcps":  { "x": 615, "y": 320, "w": 240, "h": 40, "label": "listener  mcps  (internal)", "sublabel": "same port · one route table", "color": "#f0883e", "fontSize": 12 },
+    "n_authority": { "x": 615, "y": 372, "w": 240, "h": 40, "label": ":authority header", "sublabel": "owned by the router", "color": "#f0883e", "fontSize": 13 },
+    "n_wellknown": { "x": 615, "y": 424, "w": 240, "h": 40, "label": "/.well-known/…", "sublabel": "never protected", "color": "#f0883e", "fontSize": 13 },
+
+    "n_router":    { "x": 935, "y": 105, "w": 240, "h": 50, "label": "MCP Router", "sublabel": "ext_proc server · :50051", "color": "#3fb950", "fontSize": 14 },
+    "n_broker":    { "x": 935, "y": 167, "w": 240, "h": 50, "label": "MCP Broker", "sublabel": "default backend · :8080", "color": "#3fb950", "fontSize": 14 },
+    "n_session":   { "x": 935, "y": 229, "w": 240, "h": 44, "label": "Session cache", "sublabel": "gw-session-id + server", "color": "#3fb950", "fontSize": 13 },
+    "n_toolcache": { "x": 935, "y": 285, "w": 240, "h": 44, "label": "aggregated tools cache", "sublabel": "prefixed · per protocol version", "color": "#3fb950", "fontSize": 12 },
+    "n_meta":      { "x": 935, "y": 341, "w": 240, "h": 44, "label": "tool_catalog / select_tools", "sublabel": "meta-tools · never forwarded", "color": "#3fb950", "fontSize": 11 },
+    "n_rmeta":     { "x": 935, "y": 397, "w": 240, "h": 50, "label": "resource metadata", "sublabel": "oauth-protected-resource", "color": "#3fb950", "fontSize": 12 },
+
+    "n_srv1":   { "x": 1250, "y": 110, "w": 120, "h": 60, "label": "mcp-server1", "sublabel": "test1_", "color": "#d2a8ff", "fontSize": 12 },
+    "n_srv2":   { "x": 1250, "y": 185, "w": 120, "h": 60, "label": "mcp-server2", "sublabel": "risk_", "color": "#d2a8ff", "fontSize": 12 },
+    "n_srv3":   { "x": 1250, "y": 260, "w": 120, "h": 60, "label": "mcp-server3", "sublabel": "add", "color": "#d2a8ff", "fontSize": 12 },
+    "n_srvext": { "x": 1250, "y": 335, "w": 120, "h": 60, "label": "external", "sublabel": "legacy API key", "color": "#d2a8ff", "fontSize": 12 },
+
+    "n_authpol_gw": { "x": 155, "y": 610, "w": 250, "h": 50, "label": "AuthPolicy · /mcp", "sublabel": "validate JWT · 401 + metadata", "color": "#ffa657", "fontSize": 12 },
+    "n_authpol_be": { "x": 155, "y": 672, "w": 250, "h": 50, "label": "AuthPolicy · tools/call", "sublabel": "tool ACL · exchange · API key", "color": "#ffa657", "fontSize": 12 },
+    "n_limitador":  { "x": 155, "y": 734, "w": 250, "h": 50, "label": "Limitador", "sublabel": "rate limiting enforcement", "color": "#ffa657", "fontSize": 13 },
+    "n_authorino":  { "x": 425, "y": 610, "w": 240, "h": 50, "label": "Authorino", "sublabel": "per-request auth decision", "color": "#ffa657", "fontSize": 13 },
+    "n_wristband":  { "x": 425, "y": 672, "w": 240, "h": 50, "label": "Festival Wristband", "sublabel": "signs x-mcp-authorized", "color": "#ffa657", "fontSize": 12 },
+    "n_kuadrantop": { "x": 425, "y": 734, "w": 240, "h": 50, "label": "Kuadrant Operator", "sublabel": "AuthConfig + Limits", "color": "#ffa657", "fontSize": 12 },
+
+    "n_idp":   { "x": 745, "y": 610, "w": 280, "h": 50, "label": "Keycloak", "sublabel": "OAuth 2.1 authorization server", "color": "#db61a2", "fontSize": 13 },
+    "n_dcr":   { "x": 745, "y": 672, "w": 280, "h": 44, "label": "Dynamic Client Registration", "sublabel": "required by the MCP spec", "color": "#db61a2", "fontSize": 12 },
+    "n_resrv": { "x": 745, "y": 726, "w": 280, "h": 58, "label": "resource-server clients", "sublabel": "one per MCP server · tool:<name> roles", "color": "#db61a2", "fontSize": 11 },
+
+    "n_vault":    { "x": 1105, "y": 610, "w": 260, "h": 50, "label": "Vault / key storage", "sublabel": "legacy API keys", "color": "#39c5cf", "fontSize": 13 },
+    "n_exchange": { "x": 1105, "y": 672, "w": 260, "h": 50, "label": "Token exchange", "sublabel": "RFC 8693 · narrow aud + scope", "color": "#39c5cf", "fontSize": 12 },
+    "n_credref":  { "x": 1105, "y": 726, "w": 260, "h": 58, "label": "credentialRef Secret", "sublabel": "broker → upstream discovery only", "color": "#39c5cf", "fontSize": 11 }
+  },
+  "tooltips": {
+    "admin": {
+      "title": "Platform Engineer",
+      "description": "Operates the gateway through Gateway API and three CRDs. The point of the design is that exposing an MCP server should feel like exposing any other RESTful API: a route, a policy, done.",
+      "details": [
+        ["Creates", "HTTPRoute + MCPServerRegistration per server"],
+        ["Optionally", "MCPVirtualServer for curated scopes"],
+        ["Policy", "AuthPolicy / RateLimitPolicy via Kuadrant"]
+      ]
+    },
+    "client": {
+      "title": "MCP Client (agent)",
+      "description": "Sees a single MCP server at a single endpoint. It has no idea how many servers are federated behind the gateway, and needs no client-side changes to benefit from any of this.",
+      "details": [
+        ["Endpoint", "https://<host>/mcp"],
+        ["Methods", "initialize, tools/list, tools/call, notifications"],
+        ["Discovery", "401 + WWW-Authenticate leads it to the metadata"]
+      ]
+    },
+    "n_reg": {
+      "title": "MCPServerRegistration",
+      "description": "The CRD that registers an MCP server with the gateway. It does not hold a URL - it targets an HTTPRoute, and the controller resolves that into a backend the broker can reach.",
+      "details": [
+        ["targetRef", "an HTTPRoute attached to the gateway"],
+        ["toolPrefix", "namespaces this server's tools"],
+        ["credentialRef", "optional upstream credential (broker only)"],
+        ["caCertSecretRef", "per-server CA, appended to the trust pool"]
+      ]
+    },
+    "n_vsrv": {
+      "title": "MCPVirtualServer",
+      "description": "An operator-curated subset of the federation, selecting individual tools or whole categories. A category-based virtual server picks up new tools in that category automatically, and can get its own route path.",
+      "details": [
+        ["Selects", "tools, or categories like dining / scheduling"],
+        ["Client opts in", "X-Mcp-Virtualserver header"],
+        ["Appears in", "the tool catalog, so agents can find it"]
+      ]
+    },
+    "n_ctrl": {
+      "title": "MCP Discovery Controller",
+      "description": "Watches the MCP CRDs and their HTTPRoutes and turns them into configuration for the data plane. It also decides WHICH gateways get a given server, using the listener port as the binding key - which is what makes team isolation on a shared gateway possible.",
+      "details": [
+        ["Watches", "MCPServerRegistration, MCPVirtualServer, HTTPRoute"],
+        ["Resolves", "HTTPRoute -> accepted Gateway -> MCPGatewayExtension"],
+        ["Filters by", "the extension's listener port"],
+        ["Reports", "status back onto the registrations"]
+      ]
+    },
+    "n_cfg": {
+      "title": "Config Secret",
+      "description": "The single artifact that connects control plane to data plane. The controller writes it; the broker and router consume it. Team isolation falls out of this: each extension namespace only receives the servers whose routes attach to its port.",
+      "details": [
+        ["Written by", "the discovery controller"],
+        ["Read by", "the broker (at startup) and the router"],
+        ["Contains", "backend URLs, prefixes, CA bundles, virtual servers"]
+      ]
+    },
+    "n_httproute": {
+      "title": "HTTPRoute per MCP server",
+      "description": "Each MCP server gets exactly one route, with a hostname matching the internal wildcard listener. That hostname is never DNS-resolvable - its only job is to give the router a value to set :authority to. Because each server has its own route, each can carry its own AuthPolicy.",
+      "details": [
+        ["Convention", "<serverName>.mcp.local"],
+        ["Relationship", "1 route : 1 MCP backend"],
+        ["Must attach to", "a listener on the extension's port"],
+        ["Enables", "a different AuthPolicy per MCP server"]
+      ]
+    },
+    "n_lis_mcp": {
+      "title": "listener: mcp (public)",
+      "description": "The dedicated MCP port. The ext_proc filter intercepts everything arriving here and expects JSON-RPC, so other workloads belong on a different port - the upstream design puts Keycloak on 8002 for exactly this reason.",
+      "details": [
+        ["Hostname", "the publicly resolvable MCP host"],
+        ["Router flag", "--mcp-gateway-public-host"],
+        ["Other workloads", "use a separate port"]
+      ]
+    },
+    "n_extproc": {
+      "title": "1 - ext_proc filter",
+      "description": "First in the chain, so the router parses the JSON-RPC body before any policy is evaluated. Body mode must be BUFFERED: in STREAMED mode Envoy silently ignores header mutations and ClearRouteCache made during the body phase, which shows up as intermittent requests being answered by the broker instead of the backend.",
+      "details": [
+        ["Order", "INSERT_FIRST"],
+        ["Body mode", "BUFFERED (required)"],
+        ["Size limit", "per_connection_buffer_limit_bytes, 1MB default"],
+        ["failure_mode_allow", "false - no auth bypass if the router is down"]
+      ]
+    },
+    "n_wasm": {
+      "title": "2 - Kuadrant WASM filter",
+      "description": "Runs after the router has set the MCP headers, and calls Authorino when the AuthPolicy says to. The ordering is the whole trick: tool-level authorization is possible because x-mcp-toolname already exists by the time policy is evaluated.",
+      "details": [
+        ["Order", "INSERT_BEFORE ROUTER"],
+        ["Calls", "Authorino, per the AuthConfig"],
+        ["Sees", "router-set x-mcp-* headers"]
+      ]
+    },
+    "n_envoyrt": {
+      "title": "3 - Envoy Router",
+      "description": "The terminal filter. It picks an upstream cluster from the route table using the :authority the MCP router set. The design deliberately leaves all routing and traffic handling to Envoy.",
+      "details": [
+        ["Routes on", ":authority"],
+        ["Route cache", "cleared by the router to force re-routing"]
+      ]
+    },
+    "n_lis_mcps": {
+      "title": "listener: mcps (internal)",
+      "description": "A wildcard listener the per-server routes attach to, on the same port as the public one. With HTTP, listeners sharing a port share a single Envoy route table, which is what lets an :authority rewrite reach a backend route. With HTTPS each TLS filter chain gets its own isolated route table, so use one HTTPS listener with a wildcard hostname.",
+      "details": [
+        ["Hostname", "*.mcp.local (any wildcard)"],
+        ["Port", "same as the public listener"],
+        ["HTTP", "one shared route table - rewrite works"],
+        ["HTTPS", "one listener only, or the backend is unreachable"]
+      ]
+    },
+    "n_authority": {
+      "title": ":authority - owned by the router",
+      "description": "The router owns this header for every request on the MCP listener. Non-tool calls get the external gateway host, so they land on the broker. A tools/call gets the target server's HTTPRoute host. Clients cannot opt out: the router validates everything, even the calls it does not re-route.",
+      "details": [
+        ["Non-tool calls", "the public gateway host -> broker"],
+        ["tools/call", "the backend's HTTPRoute host"],
+        ["Bypass", "impossible - the router sees every request"]
+      ]
+    },
+    "n_wellknown": {
+      "title": "/.well-known endpoints",
+      "description": "Left unauthenticated on purpose. A client that gets a 401 has to be able to fetch the resource metadata to learn where to authenticate, so these paths are excluded from the AuthPolicy.",
+      "details": [
+        ["Protected resource", "/.well-known/oauth-protected-resource/mcp"],
+        ["Served by", "the MCP Broker"],
+        ["Auth", "excluded from the AuthPolicy"]
+      ]
+    },
+    "n_router": {
+      "title": "MCP Router",
+      "description": "An Envoy ext_proc component that understands the MCP protocol. It parses and validates JSON-RPC, sets the routing and identity headers, manages backend sessions on the client's behalf, and invalidates cached sessions when a backend answers 404.",
+      "details": [
+        ["Sets", "x-mcp-servername, x-mcp-toolname, mcp-session-id"],
+        ["Strips", "mcp-init-host, router-key, x-mcp-authorized, x-mcp-virtualserver"],
+        ["Mostly handles", "tools/call - but validates everything"],
+        ["Future", "may move towards WASM or a dynamic module"]
+      ]
+    },
+    "n_broker": {
+      "title": "MCP Broker",
+      "description": "The default backend for /mcp, and an MCP client to every discovered server. It answers initialize and tools/list, builds the aggregated list, validates that discovered servers meet the minimum protocol version and capabilities before including their tools, and relays notifications in both directions.",
+      "details": [
+        ["Handles", "initialize, tools/list, notifications, metadata"],
+        ["Never handles", "tools/call - re-routed before it gets there"],
+        ["Validates", "upstream protocol version + capabilities"],
+        ["Dual protocol", "partitions tools by version via ProtocolHandler"]
+      ]
+    },
+    "n_session": {
+      "title": "Session cache",
+      "description": "Maps a gateway session plus a server name to that backend's own session id, in memory or in Redis. Backend session ids never reach clients - the router rewrites them to gateway ids on the way out - and the key includes the gateway session so no client can reach another's session.",
+      "details": [
+        ["Key", "gateway-session-id + server-name"],
+        ["Backend", "in-memory or Redis"],
+        ["Created", "lazily, on the first tools/call to that server"],
+        ["Invalidated", "when a backend answers 404"]
+      ]
+    },
+    "n_toolcache": {
+      "title": "Aggregated tools cache",
+      "description": "One tool list built from every validated server, each entry carrying its server's prefix. It is partitioned per protocol version, so version-specific behaviour stays isolated and removable.",
+      "details": [
+        ["Built during", "the discovery phase"],
+        ["Prefixing", "avoids name collisions across servers"],
+        ["Filtered by", "x-mcp-authorized and X-Mcp-Virtualserver"]
+      ]
+    },
+    "n_meta": {
+      "title": "Meta-tools: catalog and selection",
+      "description": "Federate 20+ servers and tools/list returns hundreds of schemas - context bloat, token cost, and measurably worse tool selection as the list grows. The answer is progressive discovery: hand the agent two meta-tools instead of 200 schemas. Only the gateway can offer this, because only it sees the whole federation.",
+      "details": [
+        ["tool_catalog", "lightweight metadata: categories, hints, names"],
+        ["select_tools", "scopes the session to a chosen subset"],
+        ["Then", "tools/list returns only those, with full schemas"],
+        ["Threshold", "--discovery-tool-threshold, 0 = never hide tools"],
+        ["Cost", "one extra turn; far fewer tokens afterwards"]
+      ]
+    },
+    "n_rmeta": {
+      "title": "OAuth protected resource metadata",
+      "description": "The broker serves this document and does nothing else with it - it is how a client discovers which authorization server to use. The scope list is aggregated across all MCP servers, which is exactly why the phase 1 token is over-privileged and why token exchange exists.",
+      "details": [
+        ["resource", "derived from the gateway host and path"],
+        ["authorization_servers", "the shared OAuth provider"],
+        ["bearer_methods_supported", "header"],
+        ["scopes_supported", "aggregated across every server"]
+      ]
+    },
+    "n_srv1": {
+      "title": "mcp-server1",
+      "description": "An upstream MCP server. It receives tools/call requests routed to it by Envoy, with the gateway's prefix already stripped - so it never has to know it is federated.",
+      "details": [
+        ["Reached via", "its own HTTPRoute"],
+        ["Tool name", "arrives unprefixed"],
+        ["Policy", "its own AuthPolicy, if you want one"]
+      ]
+    },
+    "n_srv2": {
+      "title": "mcp-server2",
+      "description": "A second upstream server with its own prefix and its own route, which means its own audience and its own tool-level rules.",
+      "details": [["Prefix", "risk_"], ["Isolation", "separate route, separate policy"]]
+    },
+    "n_srv3": {
+      "title": "mcp-server3",
+      "description": "A third upstream server. Adding one is a route plus a registration - the client-facing endpoint never changes.",
+      "details": [["Adding a server", "HTTPRoute + MCPServerRegistration"]]
+    },
+    "n_srvext": {
+      "title": "External / legacy MCP server",
+      "description": "A server outside the cluster, or one that predates OAuth and still wants an API key. Both cases are handled at the gateway rather than in the server: fetch the key during the policy's metadata phase and inject it, so the client never holds it.",
+      "details": [
+        ["API key", "fetched from Vault by the AuthPolicy"],
+        ["Injected", "as a request header for that server only"],
+        ["Client", "never sees the upstream credential"]
+      ]
+    },
+    "n_authpol_gw": {
+      "title": "AuthPolicy on /mcp",
+      "description": "Protects the client-facing endpoint. Any unauthenticated request outside /.well-known gets a 401 plus a WWW-Authenticate header carrying a resource_metadata URL - the start of the OAuth discovery dance.",
+      "details": [
+        ["Targets", "the MCP gateway HTTPRoute"],
+        ["Phase", "authentication - JWT validation"],
+        ["On failure", "401 + WWW-Authenticate"]
+      ]
+    },
+    "n_authpol_be": {
+      "title": "AuthPolicy on tool calls",
+      "description": "A second policy on the listener dedicated to MCP server routes. It runs three phases: authentication, then metadata (fetch an ACL, an API key, or a fresh token), then authorization. Because each MCP server has its own route, defaults and overrides let you tune this per server.",
+      "details": [
+        ["Phase 1", "authentication - validate the JWT"],
+        ["Phase 2", "metadata - fetch ACL / API key / exchanged token"],
+        ["Phase 3", "authorization - allow or deny"],
+        ["Granularity", "per MCP server, via its own HTTPRoute"]
+      ]
+    },
+    "n_limitador": {
+      "title": "Limitador",
+      "description": "Kuadrant's rate-limiting enforcement. The MCP Gateway deliberately does not implement auth or rate limiting itself - it stays focused on the protocol and lets integrations like Kuadrant provide these.",
+      "details": [
+        ["Enforces", "RateLimitPolicy"],
+        ["Design constraint", "auth and limits belong to integrations"]
+      ]
+    },
+    "n_authorino": {
+      "title": "Authorino",
+      "description": "Makes the per-request decision: validate the token with the authorization server, fetch whatever extra data the policy needs, then allow or deny. It is the component that turns a declarative AuthPolicy into an answer for Envoy.",
+      "details": [
+        ["Validates", "the JWT against the auth server"],
+        ["Fetches", "ACLs, API keys, exchanged tokens"],
+        ["Decides", "allow / deny, per request"]
+      ]
+    },
+    "n_wristband": {
+      "title": "Festival Wristband",
+      "description": "How a permission decision travels from Authorino to the broker without being forgeable. Authorino mints a short-lived signed JWT whose allowed-capabilities claim lists the permitted items per server, and sets it as x-mcp-authorized. The broker verifies it with TRUSTED_HEADER_PUBLIC_KEY.",
+      "details": [
+        ["Header", "x-mcp-authorized"],
+        ["Claim", "allowed-capabilities, keyed by capability type"],
+        ["Verified with", "TRUSTED_HEADER_PUBLIC_KEY"],
+        ["If verification fails", "the broker returns an EMPTY tool list"]
+      ]
+    },
+    "n_kuadrantop": {
+      "title": "Kuadrant Operator",
+      "description": "Reconciles the policy CRs into the AuthConfig and Limits that Authorino and Limitador actually consume. Creating the Kuadrant CR is what brings those enforcement components up.",
+      "details": [
+        ["Reconciles", "AuthPolicy -> AuthConfig"],
+        ["Reconciles", "RateLimitPolicy -> Limits"],
+        ["Deploys", "Authorino and Limitador"]
+      ]
+    },
+    "n_idp": {
+      "title": "Keycloak (identity provider)",
+      "description": "The reference OAuth 2.1 authorization server. Nothing in the design is Keycloak-specific - any IdP that supports OAuth, dynamic client registration and token exchange works. Phase 1 assumes a single IdP shared by every MCP server behind the gateway.",
+      "details": [
+        ["Reference impl", "Keycloak / RHBK"],
+        ["Must support", "dynamic client registration"],
+        ["For exchange", "Standard Token Exchange grant"],
+        ["Phase 1 assumption", "one IdP for all MCP servers"]
+      ]
+    },
+    "n_dcr": {
+      "title": "Dynamic Client Registration",
+      "description": "The MCP authorization spec expects a client to be able to register itself, so an agent nobody pre-provisioned can still obtain a token. The gateway relies on the IdP supporting it.",
+      "details": [
+        ["Spec", "OAuth 2.0 Dynamic Client Registration"],
+        ["Keycloak", "OIDC client registration endpoint"],
+        ["Needs", "full scopes allowed + the roles client scope"]
+      ]
+    },
+    "n_resrv": {
+      "title": "Resource-server clients and tool roles",
+      "description": "One OAuth client per MCP server, named after the server's internal host, with one role per tool prefixed tool:. Groups aggregate those roles and users join groups. The result is a resource_access claim that lists exactly which tools each user may call, per server.",
+      "details": [
+        ["One client", "per MCP server"],
+        ["One role", "per tool - tool:greet"],
+        ["Groups", "aggregate roles; users join groups"],
+        ["Produces", "the resource_access claim"],
+        ["Simpler option", "map users straight to roles, skip groups"]
+      ]
+    },
+    "n_vault": {
+      "title": "Vault / key storage",
+      "description": "Some MCP servers only speak API keys. Rather than teaching clients about them, the AuthPolicy fetches the key from a secret store during its metadata phase and sets it on the request heading to that one server.",
+      "details": [
+        ["Fetched during", "the policy's metadata phase"],
+        ["Injected as", "a request header"],
+        ["Scope", "that one MCP server's route"]
+      ]
+    },
+    "n_exchange": {
+      "title": "OAuth2 token exchange (RFC 8693)",
+      "description": "Narrows an over-privileged gateway token down to the one backend it is actually about. A confidential client - mcp-gateway in the reference setup - performs the exchange, and the new token's audience is the target server's internal host. The original token must already include both the target audience and the exchanging client's id, or the exchange is refused.",
+      "details": [
+        ["Performed by", "the mcp-gateway confidential client"],
+        ["New aud", "the target server's internal host"],
+        ["New scope", "openid by default, overridable per route"],
+        ["Original token must contain", "target aud + mcp-gateway"],
+        ["Keycloak needs", "Standard Token Exchange + impersonator role"]
+      ]
+    },
+    "n_credref": {
+      "title": "credentialRef - do not confuse these",
+      "description": "Two completely separate auth paths. credentialRef is the broker's own credential for listing tools and managing sessions upstream; it is never injected into a client's tools/call, never reaches the router, and never appears in a response or a log. Client-to-upstream auth is the AuthPolicy path instead.",
+      "details": [
+        ["Used by", "the broker only"],
+        ["Used for", "tool listing and session management"],
+        ["Never", "injected into a client's tools/call"],
+        ["Never", "visible to the router, clients, or logs"],
+        ["Client auth", "AuthPolicy, elicitation, or client headers"]
+      ]
+    }
+  },
+  "flows": {
+    "discovery": {
+      "label": "Registration & Tool Discovery",
+      "steps": [
+        { "text": "1. A platform engineer creates an HTTPRoute for the MCP server on the internal listener", "mode": "arrow", "from": "admin", "to": "n_httproute", "color": "#58a6ff", "num": 1, "glow": "c_control" },
+        { "text": "2. Its hostname is never DNS-resolvable - it only gives the router an :authority to aim at", "mode": "lightup", "target": "n_httproute", "badge": 1 },
+        { "text": "3. Then an MCPServerRegistration whose targetRef points at that route", "mode": "arrow", "from": "admin", "to": "n_reg", "color": "#58a6ff", "num": 3 },
+        { "text": "4. toolPrefix and the optional upstream credentialRef live on the registration", "mode": "lightup", "target": "n_reg", "badge": 4 },
+        { "text": "5. The discovery controller reconciles it", "mode": "arrow", "from": "n_reg", "to": "n_ctrl", "color": "#58a6ff", "num": 5 },
+        { "text": "6. It walks route to accepted Gateway to extension, filtering on the listener port", "mode": "lightup", "target": "n_ctrl", "badge": 6 },
+        { "text": "7. Only matching extension namespaces get the config - that is how teams stay isolated", "mode": "arrow", "from": "n_ctrl", "to": "n_cfg", "color": "#58a6ff", "num": 7 },
+        { "text": "8. The broker reads that config Secret - at startup only", "mode": "arrow", "from": "n_cfg", "to": "n_broker", "color": "#3fb950", "num": 8, "glow": "c_mcp" },
+        { "text": "9. The broker becomes an MCP client itself: initialize, then tools/list upstream", "mode": "arrow", "from": "n_broker", "to": "n_srv1", "color": "#3fb950", "num": 9, "glow": "c_back" },
+        { "text": "10. Servers that fail the protocol-version or capability check are left out of the list", "mode": "lightup", "target": "n_srv2", "badge": 10 },
+        { "text": "11. Upstream discovery auth uses credentialRef - the broker's credential, never the client's", "mode": "lightup", "target": "n_srvext", "badge": 11 },
+        { "text": "12. Everything validated is merged into one prefixed, cached tool list", "mode": "lightup", "target": "n_toolcache", "badge": 12 },
+        { "text": "13. The gateway adds its own meta-tools, which are never forwarded to any server", "mode": "lightup", "target": "n_meta", "badge": 13 },
+        { "text": "14. A client calls tools/list and gets a single aggregated set", "mode": "arrow", "from": "n_broker", "to": "client", "color": "#3fb950", "num": 14 },
+        { "text": "15. Add another server later and nothing changes for the client - same endpoint, more tools", "mode": "lightup", "target": "n_srv3", "badge": "i" }
+      ]
+    },
+    "toolcall": {
+      "label": "tools/call: Prefix Routing",
+      "steps": [
+        { "text": "1. tools/call test1_greet arrives on the public mcp listener", "mode": "arrow", "from": "client", "to": "n_lis_mcp", "color": "#f0883e", "num": 1, "glow": "c_gw" },
+        { "text": "2. ext_proc runs first, in BUFFERED mode - STREAMED would silently drop the header mutations", "mode": "lightup", "target": "n_extproc", "badge": 1 },
+        { "text": "3. Envoy hands the whole JSON-RPC body to the router", "mode": "arrow", "from": "n_extproc", "to": "n_router", "color": "#3fb950", "num": 3, "glow": "c_mcp" },
+        { "text": "4. The router validates the body and resolves the test1_ prefix to its server", "mode": "lightup", "target": "n_router", "badge": 4 },
+        { "text": "5. It looks for a backend session, keyed by gateway-session-id plus server name", "mode": "lightup", "target": "n_session", "badge": 5 },
+        { "text": "6. Cache miss, so it hairpins an initialize back through the gateway - policies apply to that too", "mode": "arrow", "from": "n_router", "to": "n_lis_mcps", "color": "#3fb950", "num": 6 },
+        { "text": "7. The backend session id is cached, and rewritten so clients only ever see gateway ids", "mode": "lightup", "target": "n_session", "badge": 7 },
+        { "text": "8. :authority is rewritten to the backend's route host - the router owns this header", "mode": "lightup", "target": "n_authority", "badge": 8 },
+        { "text": "9. The prefix is stripped from the body: test1_greet becomes greet", "mode": "lightup", "target": "n_router", "badge": 9 },
+        { "text": "10. x-mcp-servername and x-mcp-toolname are set from the body, never by the client", "mode": "arrow", "from": "n_router", "to": "n_wasm", "color": "#ffa657", "num": 10, "glow": "c_policy" },
+        { "text": "11. Only now does the WASM filter call Authorino - the tool headers already exist", "mode": "lightup", "target": "n_authorino", "badge": 11 },
+        { "text": "12. Allowed, so the Envoy router resolves the rewritten authority to a cluster", "mode": "arrow", "from": "n_wasm", "to": "n_envoyrt", "color": "#3fb950", "num": 12 },
+        { "text": "13. The request reaches the backend over the internal listener", "mode": "arrow", "from": "n_envoyrt", "to": "n_srv1", "color": "#3fb950", "num": 13, "glow": "c_back" },
+        { "text": "14. Internal headers are stripped first - the server sees a plain unprefixed tool call", "mode": "lightup", "target": "n_srv1", "badge": 14 },
+        { "text": "15. The result streams back as SSE, with gateway session ids restored on the way out", "mode": "arrow", "from": "n_srv1", "to": "client", "color": "#3fb950", "num": 15 },
+        { "text": "16. If the router is down, failure_mode_allow: false means requests are rejected, not waved through", "mode": "lightup", "target": "n_extproc", "badge": "i" }
+      ]
+    },
+    "oauth": {
+      "label": "OAuth Discovery (Auth Phase 1)",
+      "steps": [
+        { "text": "1. A fresh client sends initialize with no token at all", "mode": "arrow", "from": "client", "to": "n_lis_mcp", "color": "#ffa657", "num": 1, "glow": "c_gw" },
+        { "text": "2. The AuthPolicy on /mcp tells the WASM filter to call Authorino", "mode": "lightup", "target": "n_authpol_gw", "badge": 1 },
+        { "text": "3. Authorino has nothing to validate", "mode": "arrow", "from": "n_wasm", "to": "n_authorino", "color": "#ffa657", "num": 3, "glow": "c_policy" },
+        { "text": "4. 401 with WWW-Authenticate, carrying a resource_metadata URL", "mode": "arrow", "from": "n_authorino", "to": "client", "color": "#f85149", "num": 4 },
+        { "text": "5. The client follows it to /.well-known/oauth-protected-resource/mcp - deliberately unprotected", "mode": "arrow", "from": "client", "to": "n_wellknown", "color": "#ffa657", "num": 5, "glow": "c_gw" },
+        { "text": "6. The broker serves the metadata and does nothing else with it", "mode": "arrow", "from": "n_wellknown", "to": "n_rmeta", "color": "#3fb950", "num": 6, "glow": "c_mcp" },
+        { "text": "7. resource, authorization_servers, bearer_methods_supported, scopes_supported", "mode": "lightup", "target": "n_rmeta", "badge": 7 },
+        { "text": "8. Nobody pre-provisioned this agent, so it registers itself", "mode": "arrow", "from": "client", "to": "n_dcr", "color": "#db61a2", "num": 8, "glow": "c_idp" },
+        { "text": "9. Keycloak authenticates the user and issues an access token", "mode": "lightup", "target": "n_idp", "badge": 9 },
+        { "text": "10. The scope set is aggregated across every server, so this token is over-privileged by design", "mode": "lightup", "target": "n_rmeta", "badge": "i" },
+        { "text": "11. Token in hand", "mode": "arrow", "from": "n_idp", "to": "client", "color": "#db61a2", "num": 11 },
+        { "text": "12. initialize again, this time with Authorization: Bearer", "mode": "arrow", "from": "client", "to": "n_lis_mcp", "color": "#3fb950", "num": 12 },
+        { "text": "13. Authorino validates the JWT against the configured authorization server", "mode": "arrow", "from": "n_wasm", "to": "n_authorino", "color": "#ffa657", "num": 13, "glow": "c_policy" },
+        { "text": "14. 200 - and since initialize is not a tool call, it goes to the broker", "mode": "arrow", "from": "n_authorino", "to": "n_broker", "color": "#3fb950", "num": 14, "glow": "c_mcp" },
+        { "text": "15. The broker answers with its capabilities and an mcp-session-id", "mode": "arrow", "from": "n_broker", "to": "client", "color": "#3fb950", "num": 15 }
+      ]
+    },
+    "filtering": {
+      "label": "Identity-Based Tool Filtering (Phase 2)",
+      "steps": [
+        { "text": "1. tools/list with a valid bearer token", "mode": "arrow", "from": "client", "to": "n_lis_mcp", "color": "#ffa657", "num": 1, "glow": "c_gw" },
+        { "text": "2. Authorino authenticates, then runs its metadata phase", "mode": "lightup", "target": "n_authorino", "badge": 1 },
+        { "text": "3. The token's resource_access claim lists tool: roles per MCP server client", "mode": "lightup", "target": "n_resrv", "badge": 2 },
+        { "text": "4. A header the client could forge would be worthless, so Authorino signs one instead", "mode": "arrow", "from": "n_authorino", "to": "n_wristband", "color": "#ffa657", "num": 4, "glow": "c_policy" },
+        { "text": "5. The wristband is a short-lived JWT with an allowed-capabilities claim, set as x-mcp-authorized", "mode": "lightup", "target": "n_wristband", "badge": 5 },
+        { "text": "6. It travels with the request to the broker", "mode": "arrow", "from": "n_wristband", "to": "n_broker", "color": "#3fb950", "num": 6, "glow": "c_mcp" },
+        { "text": "7. The broker verifies it with TRUSTED_HEADER_PUBLIC_KEY and reads the capabilities map", "mode": "lightup", "target": "n_broker", "badge": 7 },
+        { "text": "8. The cached aggregate is filtered to what this identity may actually see", "mode": "lightup", "target": "n_toolcache", "badge": 8 },
+        { "text": "9. tools/list returns only the permitted tools", "mode": "arrow", "from": "n_broker", "to": "client", "color": "#3fb950", "num": 9 },
+        { "text": "10. If verification fails the broker returns an EMPTY list - it never falls back to everything", "mode": "lightup", "target": "n_broker", "badge": "✗", "errColor": "#f85149" },
+        { "text": "11. Filtering covers the catalog too, so agents only discover tools they are allowed to call", "mode": "lightup", "target": "n_meta", "badge": "i" },
+        { "text": "12. A client-supplied X-Mcp-Virtualserver narrows the offer further - it never widens it", "mode": "lightup", "target": "n_vsrv", "badge": "i" }
+      ]
+    },
+    "exchange": {
+      "label": "Token Exchange & API Keys",
+      "steps": [
+        { "text": "1. tools/call arrives with the broad gateway-audience token from phase 1", "mode": "arrow", "from": "client", "to": "n_lis_mcp", "color": "#39c5cf", "num": 1, "glow": "c_gw" },
+        { "text": "2. The router sets x-mcp-servername, so policy knows which backend this is about", "mode": "lightup", "target": "n_router", "badge": 1 },
+        { "text": "3. The AuthPolicy protecting tool calls takes over", "mode": "arrow", "from": "n_wasm", "to": "n_authpol_be", "color": "#ffa657", "num": 3, "glow": "c_policy" },
+        { "text": "4. Authentication first: Authorino validates the incoming JWT", "mode": "lightup", "target": "n_authorino", "badge": 4 },
+        { "text": "5. Then metadata: it calls Keycloak as the mcp-gateway confidential client to exchange it", "mode": "arrow", "from": "n_authorino", "to": "n_exchange", "color": "#39c5cf", "num": 5, "glow": "c_vault" },
+        { "text": "6. The new token's aud is the target server's internal host, with a narrow scope", "mode": "lightup", "target": "n_exchange", "badge": 6 },
+        { "text": "7. The original token must already carry that aud AND mcp-gateway, or the exchange is refused", "mode": "lightup", "target": "n_idp", "badge": "i" },
+        { "text": "8. Authorization passes, so Authorization: Bearer is replaced with the scoped token", "mode": "arrow", "from": "n_exchange", "to": "n_srv1", "color": "#3fb950", "num": 8, "glow": "c_back" },
+        { "text": "9. A legacy backend wants an API key instead - same metadata phase, different source", "mode": "arrow", "from": "n_authorino", "to": "n_vault", "color": "#39c5cf", "num": 9, "glow": "c_vault" },
+        { "text": "10. The key is fetched from Vault and injected as a header for that one server", "mode": "lightup", "target": "n_vault", "badge": 10 },
+        { "text": "11. The external server sees only its own API key, and the client never held it", "mode": "arrow", "from": "n_vault", "to": "n_srvext", "color": "#3fb950", "num": 11 },
+        { "text": "12. None of this is credentialRef - that one is broker-to-upstream discovery, never a client call", "mode": "lightup", "target": "n_credref", "badge": "i" }
+      ]
+    },
+    "progressive": {
+      "label": "Progressive Tool Discovery",
+      "steps": [
+        { "text": "1. An agent connects to a gateway federating 20+ MCP servers", "mode": "arrow", "from": "client", "to": "n_broker", "color": "#3fb950", "num": 1, "glow": "c_mcp" },
+        { "text": "2. A naive tools/list would return 100-300 full JSON schemas on turn one", "mode": "lightup", "target": "n_toolcache", "badge": 1 },
+        { "text": "3. That costs context, costs tokens, and measurably degrades which tool the model picks", "mode": "lightup", "target": "n_toolcache", "badge": "✗", "errColor": "#f85149" },
+        { "text": "4. So the gateway offers two meta-tools instead - it is the only component that sees everything", "mode": "lightup", "target": "n_meta", "badge": 4 },
+        { "text": "5. Turn 1: the agent calls tool_catalog and gets categories, hints and names - no schemas", "mode": "arrow", "from": "client", "to": "n_meta", "color": "#3fb950", "num": 5 },
+        { "text": "6. The metadata comes from the registrations, so operators add it once, per server", "mode": "lightup", "target": "n_reg", "badge": 6, "glow": "c_control" },
+        { "text": "7. The model picks on intent, not keywords: \"book a restaurant\" also implies calendar tools", "mode": "lightup", "target": "n_meta", "badge": 7 },
+        { "text": "8. It calls select_tools to scope the session to the handful it actually needs", "mode": "arrow", "from": "client", "to": "n_broker", "color": "#3fb950", "num": 8 },
+        { "text": "9. Turn 2 onward: tools/list returns only those, now with full schemas", "mode": "arrow", "from": "n_broker", "to": "client", "color": "#3fb950", "num": 9 },
+        { "text": "10. A curated MCPVirtualServer shows up in the catalog too, so agents can just use it", "mode": "lightup", "target": "n_vsrv", "badge": 10 },
+        { "text": "11. The threshold flag decides when this is enforced - 0 means no tool is ever hidden", "mode": "lightup", "target": "n_meta", "badge": "i" },
+        { "text": "12. Cost: one extra turn. Benefit: far fewer tokens and better tool selection", "mode": "arrow", "from": "n_broker", "to": "n_srv1", "color": "#3fb950", "num": 12, "glow": "c_back" }
+      ]
+    }
+  },
+  "flowOrder": ["discovery", "toolcall", "oauth", "filtering", "exchange", "progressive"],
+  "defaultFlow": "discovery",
+  "legend": [
+    { "color": "#58a6ff", "label": "Control plane · discovery" },
+    { "color": "#f0883e", "label": "Gateway · Envoy filter chain" },
+    { "color": "#3fb950", "label": "MCP Gateway · router + broker" },
+    { "color": "#d2a8ff", "label": "Upstream MCP servers" },
+    { "color": "#ffa657", "label": "Kuadrant · AuthPolicy" },
+    { "color": "#db61a2", "label": "Identity provider" },
+    { "color": "#39c5cf", "label": "Credentials · token exchange" },
+    { "color": "#f85149", "label": "Denied / degraded" }
+  ]
+};
+
+await viz.load(diagram);
+
+const cvs = el('fs-canvas');
+cvs.addEventListener('mousemove', e => {
+  const rect = cvs.getBoundingClientRect();
+  const eng = viz._engine;
+  const mx = (e.clientX - rect.left - eng._ox) / eng._sc;
+  const my = (e.clientY - rect.top - eng._oy) / eng._sc;
+  let hit = false;
+  for (const [k, n] of Object.entries(eng.state.nodes)) {
+    if (n.type === 'boundary' || n.type === 'container') continue;
+    if (eng.state.tooltips[k] && mx >= n.x && mx <= n.x + n.w && my >= n.y && my <= n.y + n.h) {
+      hit = true;
+      break;
+    }
+  }
+  cvs.style.cursor = hit ? 'pointer' : 'default';
+});
+
+viz.state.loopMode = true;
+viz.play();
+</script>
+</body>
+</html>

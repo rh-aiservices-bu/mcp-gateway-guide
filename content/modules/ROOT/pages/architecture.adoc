@@ -115,21 +115,41 @@ When authentication and authorization are enabled (Phases 7-8), the Envoy filter
 
 This ordering means the MCP Router sets `x-mcp-toolname` and `x-mcp-servername` headers *before* the Kuadrant WASM filter evaluates authorization policies. This is why tool-level authorization works on the internal `mcps` listener but not on the public `mcp` listener (see xref:08-authorization.adoc[Phase 8]).
 
-== Interactive Flow Visualizer
+== Interactive Flow Visualizers
 
-To see all of the above in action, explore the interactive animated visualizer - it walks through tool discovery, prefix routing, and progressive discovery step by step with clickable components and a request/response inspector.
+Reading a sequence diagram tells you the order of things. It does not tell you *why* the order matters - why `ext_proc` has to run before the WASM filter, or why a cache miss sends an `initialize` back out through the gateway. These two visualizers animate the flows step by step, and every box is clickable for the detail behind it.
+
+=== Architecture and Request Flow
+
+Six flows built from the upstream design documents, covering the runtime path end to end.
 
 [NOTE]
 ====
-link:https://noyitz.github.io/ai-gateway-docs/mcp-gateway/[*Open the MCP Gateway Flow Visualizer*^] (opens in a new tab)
+link:{attachmentsdir}/architecture-flow.html[*Open the Architecture and Request Flow visualizer*^] (opens in a new tab)
 
-_3 Flows | Tool Discovery | Prefix Routing | Progressive Discovery_ +
-Built by link:https://github.com/noyitz[Noy Itzikowitz^]
+_Registration and Tool Discovery | tools/call Prefix Routing | OAuth Discovery | Identity-Based Tool Filtering | Token Exchange and API Keys | Progressive Tool Discovery_
 ====
+
+=== Install and Configuration
+
+The same treatment for the nine install phases, including the three mistakes that cost the most time.
+
+[NOTE]
+====
+link:{attachmentsdir}/install-flow.html[*Open the Install and Configuration visualizer*^] (opens in a new tab)
+
+_Full Install (Phases 1-9) | The Missing Broker Pod | Both Listeners, One Port | Why Tool Authorization Needs Two Policies | Virtual Servers and Progressive Discovery_
+====
+
+=== Also available
+
+link:https://noyitz.github.io/ai-gateway-docs/mcp-gateway/[MCP Gateway Flow Visualizer^] by link:https://github.com/noyitz[Noy Itzikowitz^] - an upstream-focused visualizer with a request/response inspector.
 
 == References
 
 * link:https://docs.kuadrant.io/dev/mcp-gateway/docs/design/overview/[Upstream MCP Gateway Design Overview]
 * link:https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/understanding-mcp-gateway-architecture/[Understanding MCP Gateway Architecture]
+* link:{attachmentsdir}/architecture-flow.html[Architecture and Request Flow visualizer^]
+* link:{attachmentsdir}/install-flow.html[Install and Configuration visualizer^]
 * link:https://noyitz.github.io/ai-gateway-docs/mcp-gateway/[MCP Gateway Flow Visualizer]
 * link:https://modelcontextprotocol.io/specification/2025-06-18/[MCP Specification]
