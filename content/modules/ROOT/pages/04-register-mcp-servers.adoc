@@ -68,6 +68,18 @@ oc apply -f manifests/04-register-mcp-servers/httproute-test.yaml
 oc apply -f manifests/04-register-mcp-servers/httproute-risk.yaml
 ----
 
+IMPORTANT: Both manifests carry `parentRefs.namespace: mcp-gateway`. That is the *Gateway's* namespace, not the route's own. If you put the Gateway somewhere else in xref:02-gateway-setup.adoc[Phase 2], patch it to match, or the route silently attaches to nothing:
+
+[source,bash]
+----
+for r in test-server1-route risk-server-route; do
+  oc patch httproute $r -n mcp-test --type=json \
+    -p "[{\"op\":\"replace\",\"path\":\"/spec/parentRefs/0/namespace\",\"value\":\"${GATEWAY_NAMESPACE}\"}]"
+done
+
+oc get httproute -n mcp-test -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.parents[*].conditions[?(@.type=="Accepted")].status}{"\n"}{end}'
+----
+
 === Step 4: Create MCPServerRegistrations
 
 Register each server with the gateway:
@@ -121,7 +133,7 @@ mcp-test   test-server1      test1_  test-server1-route     /mcp  True   8      
 
 What matters is `READY: True` and a non-zero `TOOLS` count for every row.
 
-NOTE: Immediately after creating the registrations they will show `READY: False` with an empty `TOOLS` column. That is normal - the broker only picks up new servers on restart, which is what Step 5 does. If they are still `False` a minute after the restart, check the broker logs.
+NOTE: Immediately after creating the registrations they will show `READY: False` with an empty `TOOLS` column. That is normal - the broker only picks up new servers on restart, which is what Step 6 does. If they are still `False` a minute after the restart, check the broker logs.
 
 === Check Controller Logs
 
@@ -140,6 +152,22 @@ oc logs -n mcp-gateway deployment/mcp-gateway --tail=30 | grep -i "tool\|server"
 You should see `Server validation completed` with `healthyServers=3`.
 
 TIP: The broker logs repeated `unable to check conflict, tool id is missing` errors at `ERROR` level during startup. These are harmless in this setup and do not prevent tools from registering - do not chase them if your registrations are otherwise `Ready`.
+
+[#no-credentials]
+== Unauthenticated Backends Need No Secret
+
+A backend MCP server that does not require a credential needs *no Secret at all*. Leave `credentialRef` out of the `MCPServerRegistration` rather than creating an empty or placeholder Secret for it - the two in-cluster servers registered above do exactly that, and the `CREDENTIALS` column stays empty while the registration is `Ready`:
+
+[source]
+----
+NAMESPACE  NAME           PREFIX  TARGET              PATH  READY  TOOLS  CREDENTIALS
+mcp-test   risk-server    risk_   risk-server-route   /mcp  True   6
+mcp-test   test-server1   test1_  test-server1-route  /mcp  True   8
+----
+
+A `credentialRef` pointing at a Secret that does not exist, or one missing the `mcp.kuadrant.io/secret=true` label, keeps the registration from becoming `Ready`. Add the field only when the backend actually needs a token.
+
+NOTE: This is separate from end-user authentication. The credential in `credentialRef` is used by the *broker* for tool discovery and session setup. Client tokens from xref:07-authentication.adoc[Phase 7] are a different path and are forwarded independently - see <<external-servers>>.
 
 [#external-servers]
 == Registering an External MCP Server
@@ -238,7 +266,7 @@ proxy_set_header Connection "";
 | The remote MCP endpoint path. Defaults to `/mcp`; set it for servers using `/api/mcp`, `/v1/mcp` and so on.
 
 | `credentialRef`
-| Secret holding a token the *broker* uses for tool discovery. The Secret must carry the label `mcp.kuadrant.io/secret=true`.
+| *Optional.* Secret holding a token the *broker* uses for tool discovery. The Secret must carry the label `mcp.kuadrant.io/secret=true`. Omit the field entirely for an unauthenticated backend - see <<no-credentials>>.
 
 | `caCertSecretRef`
 | CA bundle for verifying a remote server with a private or internal CA.

@@ -18,7 +18,11 @@ spec:
   host: "${MCP_HOSTNAME}"
   to:
     kind: Service
-    name: mcp-gateway-istio
+    # The gateway proxy Service is named <gateway-name>-<gatewayclass-name>.
+    # With GATEWAY_CLASS=istio that is mcp-gateway-istio; on any other
+    # GatewayClass the suffix changes. A Route pointing at a Service that does
+    # not exist is still admitted and answers 503, so do not hardcode this.
+    name: mcp-gateway-${GATEWAY_CLASS}
   port:
     targetPort: 8080
   tls:
