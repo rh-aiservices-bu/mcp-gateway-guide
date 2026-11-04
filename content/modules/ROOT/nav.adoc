@@ -17,5 +17,8 @@
 .Reference
 * xref:architecture.adoc[Architecture & Request Flow]
 
+.Guide Changelog
+* xref:changelog.adoc[Guide Changelog]
+
 .Tools
 * xref:test-ui.adoc[MCP Gateway Test UI]
