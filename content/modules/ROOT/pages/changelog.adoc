@@ -1,0 +1,121 @@
+= Guide Changelog
+
+Changes to the {mcp-gw} on {ocp-short} companion guide since the project started in August 2026. Covers new guide phases, automation improvements, bug fixes, and community contributions.
+
+Each entry links to its pull request for full details.
+
+== November 2026
+
+=== Features
+
+* *Same-Port Listener Requirement* - Both the public listener and the `*.mcp.local` listener on the same port is now stated as a requirement instead of a note, with the reason behind it. The EnvoyFilter the controller creates matches a single `portNumber`, and the router rewrites `:authority`, so Envoy has to route again inside the same listener. A split layout passes every check except `tools/call`, which is why it was the root cause of a field deployment failure. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/14[#14])
+
+* *Clusters Without a Load Balancer* - New Phase 2 step for clusters where the gateway Service stays a pending LoadBalancer forever. You can get a ClusterIP Service through `infrastructure.parametersRef`, which is the same mechanism OpenShift AI uses for its own gateway. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/18[#18])
+
+* *privateHost Troubleshooting Table* - New table in Phase 3 for the hardest failure in the guide. With a wrong `privateHost` the extension reports Ready, the registrations report Ready, `initialize` works, `tools/list` works, and only `tools/call` fails with `no such host`. The real error text is included. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/15[#15])
+
+* *Verification Coverage Table* - New Phase 5 table with what each check actually proves, so nobody signs off an install after `initialize` alone. Plus troubleshooting for 503 and for the two cases where `tools/call` fails. (link:{repo-url}/pull/12[#12])
+
+* *Finding the Real Ingress Certificate* - The TLS section assumed the `default-ingress-cert` Secret, which is usually not the name on a customer cluster. Phase 2 now shows how to find the real `*.apps` certificate Secret. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/19[#19])
+
+* *Installing into openshift-operators* - The guide uses a dedicated `mcp-gateway` namespace, but an AllNamespaces Subscription in `openshift-operators` also works, so Phase 1 now documents it. The controller then runs in the Subscription's namespace, which changes every `oc logs deployment/mcp-gateway-controller` target in the guide, and there is now a command to find it without guessing. It also explains why verification looks wrong there: OLM copies cluster-wide CSVs into every namespace, so `oc get csv -n mcp-gateway` lists unrelated operators, and only rows with `InstallSucceeded` were installed by this phase while `REASON: Copied` rows can be ignored. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/20[#20])
+
+* *Known Issues and Upstream Fixes Table* - New table on the index page with all 11 trackers from field deployments and E2E testing, each pointing at the phase that covers it. Includes the two upstream code fixes (link:https://github.com/Kuadrant/mcp-gateway/pull/1241[mcp-gateway#1241^] for the `privateHost` default and link:https://github.com/Kuadrant/mcp-gateway/pull/1479[mcp-gateway#1479^] for the `spec.rules[].name` reconcile loop) and the upstream documentation tracking issues. Both code fixes are on upstream `main` for GA, so the guide now says what to do on a Tech Preview build instead of leaving readers guessing. (link:{repo-url}/pull/24[#24])
+
+=== Fixes
+
+* *Broken Quotes in Published Commands* - Several commands were written with literal `\x27` instead of a quote and `\\n` instead of `\n`, so those blocks were copy-paste broken on the published site. The Antora build does not complain because it is valid text, so it went unnoticed. 8 places across 2 pages, fixed and verified in the rendered HTML. (link:{repo-url}/pull/13[#13])
+
+* *Route Template Hardcoded the Istio Service* - `route.yaml.tmpl` had `mcp-gateway-istio` written by hand. On any other GatewayClass that Service does not exist, and the Route still reports `Admitted=True` while answering 503, which makes it very hard to find. The template now renders `+mcp-gateway-${GATEWAY_CLASS}+`, and the name does not change on the OSSM3 track. Verified against `istio`, `openshift-default` and `data-science-gateway-class`. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/17[#17])
+
+* *Gateway Variables Never Exported in the Setup Script* - `setup-mcp-gateway.sh` never exported `GATEWAY_CLASS` and `GATEWAY_NAMESPACE`, which the templates need, so the automated install created a Gateway with an empty `gatewayClassName:` and `namespace:`. Both now have defaults and can be overridden. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/22[#22])
+
+* *Wrong Proxy Namespace on the Managed Istio Track* - The guide said the gateway proxy is managed in `openshift-ingress`. It is not: the proxy is created in the namespace of the Gateway. Confirmed on a cluster with the Gateway in `mcp-gateway`. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/23[#23])
+
+* *Operator Install Modes Read Before Install* - Phase 1 used the installed CSV to show the operator install modes, which only works after you install, and used a namespace-specific label that was wrong for the `openshift-operators` case it was documenting. Replaced with the packagemanifest, which reads before anything is installed, which is when you actually decide where to put the operator. (link:{repo-url}/pull/13[#13])
+
+* *credentialRef Presented as Required* - Phase 4 showed the backend Secret as a required step. An unauthenticated backend does not need any Secret, you just leave `credentialRef` out. Also clarified that `parentRefs.namespace` is the namespace of the Gateway, not of the route. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/21[#21])
+
+* *spec.rules[].name Log Noise* - The controller writes `spec.rules[].name`, which the Gateway API v1.3.0 CRDs that {ocp-short} manages do not support, so the controller log fills with `unknown field "spec.rules[].name"` and the HTTPRoute is rewritten repeatedly. Documented as harmless: it is not an endless loop, it settles once the config stops changing. Measured as 0 rewrites in 120s with a stable resourceVersion over 60s. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/16[#16])
+
+* *Two Overclaims Removed* - Phase 2 said that with a split port layout "the filter is never installed on 443", which could not be verified and was probably wrong. It now states only what was tested: the filter sits on one port and the `*.mcp.local` routes on the other, so the rewrite has nowhere to land. A command to compare listener ports with the filter port was added. Phase 3 claimed tool discovery goes from the broker straight to the backend Service, when the only thing proven is that it does not use `privateHost`. (link:{repo-url}/pull/13[#13])
+
+* *sectionName and Step Numbering* - Phase 3 now explains that `sectionName` takes the name of the listener, with a command to list the names on your Gateway. Phase 1 step numbers jumped from Step 2 to Step 4, and Phase 4 referred to "Step 5" for the broker restart when it is Step 6. (link:{repo-url}/pull/12[#12])
+
+* *Per-Phase Tracker Links* - Each phase page now links the tickets that cover its known issues, and Phase 4 had no Related Issues section at all, so one was added. (link:{repo-url}/pull/24[#24])
+
+== October 2026
+
+=== New Pages
+
+* *External MCP Server Registration* - The biggest gap in the guide. An `ExternalName` Service resolves fine but the controller hardcodes the scheme as `http://`, so any server behind TLS, which in practice is all of them, cannot be registered directly and fails with `transport error: server returned 4xx for initialize POST, likely a legacy SSE server`. Added a TLS origination proxy pattern with its own Kustomize overlay, tested against a real public MCP server. While testing this it turned out the broker forwards the client `Authorization` header to the upstream server, so an external MCP server receives bearer tokens from your Keycloak. The proxy config strips the header, and the guide covers this as a security requirement rather than a configuration detail. Authorization was verified across the full user and tool matrix. (link:{repo-url}/pull/10[#10], link:{repo-url}/issues/7[#7])
+
+=== Features
+
+* *Two-Track Gateway Setup* - Phase 1 installed OSSM3 unconditionally and Phase 2 hardcoded `gatewayClassName: istio`. This breaks on clusters where Gateway API already comes from the Istio managed by the Ingress Operator, because the second control plane conflicts with the first. Added a detection step up front with two tracks, turned the gateway class and namespace into variables, and documented the three things that change on the managed track: the ReferenceGrant becomes mandatory, `privateHost` has to be set by hand, and the proxy deployment restarted in Phase 7 is read from its label instead of being assumed to be `mcp-gateway-istio`. (link:{repo-url}/pull/10[#10], link:{repo-url}/issues/6[#6])
+
+* *Passthrough and Reencrypt Route Termination* - The Route only documented `edge` termination. Added `reencrypt` and `passthrough` next to it, with what each one needs on the listener and on the certificate, for environments that require TLS all the way to the gateway. (link:{repo-url}/pull/10[#10], link:{repo-url}/issues/8[#8])
+
+* *CAI Team Branding and Site Search* - The guide now matches the other CAI team guides. Red Hat | CAI Team logo in the header linking to the team page, a "Search the docs" box in the top right powered by `@antora/lunr-extension` with all 14 pages indexed, and the "Maintained by" CAI Team footer badge. Also added `supplemental-ui/img/favicon.ico`, which the theme links from every page but the UI bundle does not ship, so the icon was broken before. (link:{repo-url}/pull/11[#11])
+
+=== Fixes
+
+* *Phase 6 Broken with {rhbk} 26.4* - The one that really blocked the install. The {rhbk} operator does not create a Route, it creates an Ingress with no host, so `oc get route keycloak` returns empty and `KEYCLOAK_URL` becomes `https://`. That value goes into the issuer URL of both AuthPolicies, so nothing looks wrong in Phase 6 and instead every token is rejected with a 401 in Phase 7 or 8, with no clear reason. Fixed with `spec.ingress.enabled: false` so the operator stops creating the unusable Ingress, an explicit Route namespace so the kustomization works without `-n`, and a check in Phase 6 that stops there if the URL is empty. Builds on the Route contributed by strangiato. (link:{repo-url}/pull/3[#3], link:{repo-url}/pull/10[#10], link:{repo-url}/issues/5[#5])
+
+* *Component Table Mixed Control Plane and Data Plane* - The table had operator, controller and broker at the same level in the operator namespace, and Phase 1 asked the reader to expect a broker pod that does not exist yet: the controller creates it only once an `MCPGatewayExtension` exists, in the namespace of the extension. Broker and router are also not two components, they are one container with 8080 for the broker and 50051 for the `ext_proc` router. Table reorganised into two layers and the broker check moved to Phase 3, where the pod really appears. (link:{repo-url}/pull/10[#10], link:{repo-url}/issues/4[#4])
+
+* *Things That Make a Correct Install Look Broken* - Tool counts were stale (the test server has 8 tools, not 5, and the total is 16, not 13), so fixed numbers were replaced with commands that read live state. `oc get mcpsr` expected output was missing `PATH`, `CATEGORY` and `CREDENTIALS`. `oc get authpolicy` has no status column, so "you should see both with Enforced status" could not be checked, and it now queries the condition. The OperatorGroup check expected `{}` when OLM adds a default field and a correct one returns `{"upgradeStrategy":"Default"}`, so it now checks that `targetNamespaces` is absent. The JWT decode used `base64 -d`, which fails on unpadded base64url. And every `oc wait` on a CSV failed on first run with a TIP below saying to retry, which is the normal path, so those are polling loops now. (link:{repo-url}/pull/10[#10], link:{repo-url}/issues/9[#9])
+
+* *Repeated Boilerplate and Double-Apply Instructions* - The four lines of boilerplate repeated at the top of all ten pages moved to the index. Phase 3 had "or apply everything with Kustomize" written as a third step, so following it literally applied everything twice, and it is now an either/or. Phase 2 explains why there are two listeners, since the traffic crosses the Gateway twice, inbound on `mcp` and outbound on `mcps`, and that is the reason authentication and authorization are attached where they are. Phase 1 renamed to "Install the Operators", because it installs rather than lists. (link:{repo-url}/pull/10[#10])
+
+* *Virtual Server Config Merge Moved to a Script* - The Phase 9 `python3 -c` block with YAML inside triple quotes breaks on any quote in the config. Replaced with `scripts/merge-virtualserver-config.sh`. (link:{repo-url}/pull/10[#10])
+
+* *Architecture Page Corrections* - The controller writes a Secret, not a ConfigMap, and the broker reads it only at startup, which is the actual reason adding a server needs a restart. Also added a note that the Keycloak PostgreSQL has no PVC: fine for a lab, but a pod restart loses the realm and the admin secret no longer matches. (link:{repo-url}/pull/10[#10])
+
+* *verify.sh Auth Detection* - The script failed with a plain `Unauthorized` on clusters with authentication enabled. It now detects whether authentication is on by itself. (link:{repo-url}/pull/10[#10])
+
+* *Duplicate Root-Level Manifests Removed* - `gateway.yaml` and `route.yaml` at the repository root duplicated `manifests/02-gateway-setup/*.tmpl` and had a sandbox cluster domain hardcoded. (link:{repo-url}/pull/10[#10])
+
+* *GitHub Pages Workflow Path Filter* - The workflow only watched `content/**` and `site.yml`, so any change under `supplemental-ui/` never triggered a rebuild. The workflow also installs the lunr extension now and copies the favicon to the site root, because the generated root is a redirect stub with no head links. (link:{repo-url}/pull/11[#11])
+
+== August 2026
+
+=== Initial Release
+
+* *Guide Launch* - Antora documentation site deployed on GitHub Pages. Phases 1-9 covering operator install, gateway setup, the {mcp-gw} extension, MCP server registration, verification, {rhbk} deployment, authentication, authorization, and virtual MCP servers. Includes the `setup-mcp-gateway.sh` automation script, `verify.sh`, and Kustomize manifests for each phase.
+
+* *Architecture and Request Flow Reference* - Reference page covering the component layers and how a request crosses the gateway, the router and the broker on its way to a backend MCP server.
+
+* *{mcp-gw} Test UI* - Streamlit app for exercising the MCP protocol against the gateway directly, for cases where curl is not enough to see what is happening.
+
+* *Phase 7 and Phase 8 Manifest Explanations* - Detailed per-manifest walkthroughs for the authentication and authorization phases, instead of apply-and-hope instructions.
+
+=== Fixes
+
+* *Switched to the istio GatewayClass* - Moved the guide onto OSSM3 with the `istio` GatewayClass, added the Route for external access, and fixed the {rhbk} operator install.
+
+* *Authorino Namespace in the Auth EnvoyFilter* - `envoyfilter-auth-ssl.yaml` referenced `kuadrant-system`, but authorino actually deploys in `mcp-gateway`. Applying the old version creates an Envoy cluster pointing at a Service that does not exist, so it breaks authentication completely instead of fixing it. (link:{repo-url}/pull/2[#2])
+
+* *Virtual Server Config Merge* - The MCPVirtualServer controller writes its config to `mcp-system/mcp-gateway-config` but the broker reads from `mcp-gateway/mcp-gateway-config`. Without a merge step, virtual servers are silently ignored and the broker logs `failed to get virtual server ... not found`. Added the merge step to Phase 9 with troubleshooting for the split-namespace case. Found during an E2E deployment on {ocp-short} 4.21 with {rhcl} 1.4. (link:{repo-url}/pull/2[#2])
+
+* *MCPSR Ready Count Check* - The setup script miscounted ready MCPServerRegistrations.
+
+* *Related Issue Links Moved to OSDOCS* - 6 issue links across 4 pages moved from CONNLINK to OSDOCS. The CONNLINK issues were closed as Duplicate after the new OSDOCS tickets were created at the docs team's request, and the original CONNLINK references are kept in parentheses for traceability. (link:{repo-url}/pull/1[#1])
+
+== Contributors
+
+[cols="1,2", options="header"]
+|===
+| Contributor | Contributions
+
+| rcarrata
+| Primary author - guide content, automation scripts, Kustomize manifests
+
+| strangiato
+| {rhbk} Route for Phase 6
+
+| Olimp
+| Full content review across Phases 1-9: component layering, OSSM3 assumptions, and Route termination modes
+|===
+
+Field findings from a customer deployment on {ocp-short} 4.21 produced the 11 trackers listed in the xref:index.adoc#_known_issues_and_upstream_fixes[Known Issues and Upstream Fixes] table.
