@@ -121,7 +121,7 @@ On Track B that default points at a Service that *does not exist*. The failure i
 
 | `oc get mcpsr -A`
 | `Ready=True`, correct `TOOLS` count
-| Tool discovery runs from the broker straight to the backend Service, not through `privateHost`
+| Tool discovery does not use `privateHost` at all, so a bogus value never shows up here
 
 | `initialize`
 | works
@@ -242,7 +242,7 @@ oc logs -n mcp-gateway deployment/mcp-gateway-controller --tail=20
 [#rules-changed]
 === "unknown field spec.rules[].name" in the controller logs
 
-On a cluster whose Gateway API CRDs are older than the controller expects, every reconcile logs this pair:
+On a cluster whose Gateway API CRDs are older than the controller expects, every reconcile logs these lines:
 
 [source]
 ----
