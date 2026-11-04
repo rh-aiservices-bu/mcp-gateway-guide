@@ -295,6 +295,7 @@ Both listener ports must equal the EnvoyFilter's `portNumber`. See xref:02-gatew
 == Related Issues
 
 * link:https://issues.redhat.com/browse/OSDOCS-21436[OSDOCS-21436] (was link:https://issues.redhat.com/browse/CONNLINK-1499[CONNLINK-1499]) - Verification curl in official docs missing required Accept header. This guide includes `Accept: application/json, text/event-stream` in all curl commands.
+* link:https://issues.redhat.com/browse/OSDOCS-24044[OSDOCS-24044] - the only verification step in the official docs is `initialize`. It does not confirm registration, `tools/list` or `tools/call`, and a wrong `privateHost` passes all of those except `tools/call`.
 
 == References
 

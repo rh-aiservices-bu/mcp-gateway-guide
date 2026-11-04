@@ -302,6 +302,9 @@ manifests/03-mcp-gateway-extension/
 
 * link:https://issues.redhat.com/browse/OSDOCS-21435[OSDOCS-21435] (was link:https://issues.redhat.com/browse/CONNLINK-1498[CONNLINK-1498]) - privateHost default assumes the Istio GatewayClass but the docs use openshift-default. On Track A the default works; on Track B you must set `privateHost` explicitly, as described in <<privatehost>>.
 * link:https://issues.redhat.com/browse/OSDOCS-21437[OSDOCS-21437] (was link:https://issues.redhat.com/browse/CONNLINK-1500[CONNLINK-1500]) - Auto-generated HTTPRoute example shows wrong namespace in parentRefs. This guide creates HTTPRoutes with the correct gateway namespace.
+* link:https://issues.redhat.com/browse/OSDOCS-24040[OSDOCS-24040] - the `MCPGatewayExtension` example uses `sectionName: mcp`, but no listener with that name exists in the documented Gateway.
+* link:https://issues.redhat.com/browse/CONNLINK-1936[CONNLINK-1936] - the controller rewrites `mcp-gateway-route` because it sets `spec.rules[].name`, which the cluster HTTPRoute CRD does not support. Fixed upstream in link:https://github.com/Kuadrant/mcp-gateway/pull/1479[Kuadrant/mcp-gateway#1479]. See <<rules-changed>>.
+* The `privateHost` default is fixed upstream in link:https://github.com/Kuadrant/mcp-gateway/pull/1241[Kuadrant/mcp-gateway#1241]. On a Tech Preview build set `privateHost` explicitly, as described in <<privatehost>>.
 
 == References
 
