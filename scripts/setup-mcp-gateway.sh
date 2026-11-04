@@ -72,8 +72,18 @@ check_prerequisites() {
 
     export CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')
     export MCP_HOSTNAME="mcp.${CLUSTER_DOMAIN}"
+
+    # Consumed by envsubst on the Phase 2 templates. Without these the Gateway
+    # renders with an empty namespace and gatewayClassName. Override both before
+    # running this script when the cluster already has a Gateway API provider
+    # (Track B), e.g. GATEWAY_CLASS=openshift-default.
+    export GATEWAY_CLASS="${GATEWAY_CLASS:-istio}"
+    export GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-mcp-gateway}"
+
     log_ok "Cluster domain: $CLUSTER_DOMAIN"
     log_ok "MCP hostname:   $MCP_HOSTNAME"
+    log_ok "GatewayClass:   $GATEWAY_CLASS"
+    log_ok "Gateway ns:     $GATEWAY_NAMESPACE"
 }
 
 # Phase 1: Prerequisites

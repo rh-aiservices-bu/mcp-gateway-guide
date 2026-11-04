@@ -69,7 +69,7 @@ Pick the track that matches the output:
 
 | A GatewayClass already exists (for example `openshift-default`, or a {ocp-short} AI / data-science gateway class)
 | *Track B - existing provider*
-| *Skip Step 2 and Step 3.* Do not install OSSM3 and do not create an `Istio` CR.
+| *Skip Step 2.* Do not install OSSM3 and do not create an `Istio` CR.
 |===
 
 WARNING: On Track B, installing OSSM3 and creating a second `Istio` control plane will *conflict* with the Istio managed by the Ingress Operator in `openshift-ingress`. Only one Istio control plane can own the Gateway API resources.
@@ -81,9 +81,11 @@ If you are on Track B, record your values now - later phases need them:
 # Name of the GatewayClass you intend to use
 export GATEWAY_CLASS="openshift-default"
 
-# Namespace where the Gateway object will live. With an Ingress-Operator-managed
-# provider this is normally openshift-ingress, not mcp-gateway.
-export GATEWAY_NAMESPACE="openshift-ingress"
+# Namespace where the Gateway object will live. Your own Gateway does not have
+# to sit next to the provider's existing one - a Gateway in mcp-gateway is
+# accepted and programmed by an Ingress-Operator-managed GatewayClass too, and
+# the proxy is then created in mcp-gateway. Keeping it here is simpler.
+export GATEWAY_NAMESPACE="mcp-gateway"
 ----
 
 On Track A, use the defaults:
@@ -98,11 +100,11 @@ Track B also changes three things later on, so it is worth flagging them here:
 
 * The Gateway and the `MCPGatewayExtension` end up in *different namespaces*, which makes the xref:03-mcp-gateway-extension.adoc[ReferenceGrant] mandatory rather than optional.
 * The extension's default `privateHost` assumes the `istio` GatewayClass naming and will point at a Service that does not exist. You must set it explicitly.
-* The gateway proxy Deployment you restart in xref:07-authentication.adoc[Phase 7] is managed in `openshift-ingress`.
+* The gateway proxy Deployment you restart in xref:07-authentication.adoc[Phase 7] is named `<gateway-name>-<gatewayclass-name>`, not `<gateway-name>-istio`. It is created in the *Gateway's* namespace, so it follows `GATEWAY_NAMESPACE` rather than always living in `openshift-ingress`.
 
 === Step 2: Install OpenShift Service Mesh 3
 
-NOTE: Track A only. If your cluster already has a GatewayClass (Track B), skip this step and Step 3 and go straight to Step 4.
+NOTE: Track A only. If your cluster already has a GatewayClass (Track B), skip this step and go straight to Step 3.
 
 The `istio` GatewayClass is provided by OpenShift Service Mesh 3 (OSSM3). Install the OSSM3 operator:
 
@@ -136,14 +138,14 @@ until oc get istio/default -o jsonpath='{.status.conditions[?(@.type=="Ready")].
 done; echo " Istio ready"
 ----
 
-=== Step 4: Create the Namespace
+=== Step 3: Create the Namespace
 
 [source,bash]
 ----
 oc apply -f manifests/01-prerequisites/operators/namespace.yaml
 ----
 
-=== Step 5: Install the MCP Gateway Operator
+=== Step 4: Install the MCP Gateway Operator
 
 [source,bash]
 ----
@@ -151,6 +153,27 @@ oc apply -k manifests/01-prerequisites/operators/
 ----
 
 This creates the OperatorGroup and Subscription for the `mcp-gateway` operator from the `redhat-operators` catalog source.
+
+=== Installing into openshift-operators instead
+
+This guide uses a dedicated `mcp-gateway` namespace. Installing the Subscription into `openshift-operators` (AllNamespaces) also works, and the operator supports it:
+
+[source,bash]
+----
+oc get csv -l operators.coreos.com/mcp-gateway.mcp-gateway="" -A \
+  -o jsonpath=\x27{range .items[*]}{.metadata.namespace}{"\\t"}{.spec.installModes}{"\\n"}{end}\x27
+----
+
+Two things change, and both are easy to get wrong:
+
+* *The controller runs in the Subscription's namespace*, so it is in `openshift-operators`, not `mcp-gateway`. Every `oc logs deployment/mcp-gateway-controller -n mcp-gateway` in this guide has to target that namespace instead. Find it without guessing:
++
+[source,bash]
+----
+oc get deploy -A | grep mcp-gateway-controller
+----
+
+* *The `MCPGatewayExtension` namespace is still your choice.* It is unrelated to where the operator is installed - the controller watches all namespaces either way, and the broker is created in the *extension's* namespace. Put the extension where you want the broker.
 
 == Verification
 
@@ -165,6 +188,24 @@ until oc get csv -n mcp-gateway -l operators.coreos.com/mcp-gateway.mcp-gateway=
   sleep 10; echo -n "."
 done; echo " MCP Gateway operator installed"
 ----
+
+The label selector matters. A plain `oc get csv -n mcp-gateway` also lists every operator installed cluster-wide from `openshift-operators`, because OLM copies their CSVs into all namespaces:
+
+[source,bash]
+----
+oc get csv -n mcp-gateway -o custom-columns=\x27NAME:.metadata.name,PHASE:.status.phase,REASON:.status.reason\x27
+----
+
+[source]
+----
+NAME                                      PHASE        REASON
+limitador-operator.v1.4.2                 Succeeded    InstallSucceeded
+mcp-gateway.v0.7.1                        Succeeded    InstallSucceeded
+openshift-gitops-operator.v1.22.3         Succeeded    Copied       <-- not yours
+rhods-operator.3.5.2                      Succeeded    Copied       <-- not yours
+----
+
+Rows with `REASON: Copied` are unrelated operators and can be ignored. Only rows with `InstallSucceeded` were installed by this phase.
 
 === Verify CRDs Are Available
 

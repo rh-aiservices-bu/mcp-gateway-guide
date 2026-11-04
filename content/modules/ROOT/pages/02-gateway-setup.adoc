@@ -25,6 +25,31 @@ Because the broker re-enters the Gateway on the `mcps` listener, each registered
 
 NOTE: Both listeners are plain HTTP on port 8080. TLS for external clients is handled by the OpenShift Route in Step 3. See <<tls-termination-options>> if you need encryption all the way to the Gateway.
 
+[IMPORTANT]
+====
+*Both listeners must be on the same port.* This is a hard requirement, not a style choice, and splitting them is the most expensive mistake you can make here - it produces an install where everything reports healthy and `tools/call` never works.
+
+The reason is in the EnvoyFilter the controller generates in xref:03-mcp-gateway-extension.adoc[Phase 3]. It matches *one* port:
+
+[source,yaml]
+----
+match:
+  context: GATEWAY
+  listener:
+    portNumber: 8080        # <-- the port of the sectionName listener, only
+patch:
+  value:
+    name: envoy.filters.http.ext_proc
+    typed_config:
+      mutation_rules:
+        allow_all_routing: true
+----
+
+On `tools/call` the router rewrites the request's `:authority` to `<server>.mcp.local` - that is what `allow_all_routing: true` permits - and Envoy then re-routes the request *inside the same listener*. So the `*.mcp.local` routes have to be reachable on the port that carries the filter.
+
+Put the public listener on `443` and the `*.mcp.local` listener on `8080` and both halves break at once: the filter is never installed on `443`, and on `8080` there is no public route. Terminate TLS in front of the Gateway (the Route in Step 3) instead of giving the public listener its own port.
+====
+
 == Installation
 
 === Step 1: Set Your Environment
@@ -70,7 +95,23 @@ oc get deploy -n "$GATEWAY_NAMESPACE" \
   -o name
 ----
 
-NOTE: With an Ingress-Operator-managed GatewayClass (Track B), the Gateway object and its proxy are managed in `openshift-ingress`, and the proxy naming is controlled by that operator - always read the name from the command above rather than assuming it.
+The proxy is created in the *Gateway's* namespace, whichever that is - an Ingress-Operator-managed GatewayClass does not force it into `openshift-ingress`. On this cluster a Gateway in `mcp-gateway` with `gatewayClassName: data-science-gateway-class` produced:
+
+[source]
+----
+deployment.apps/mcp-gateway-data-science-gateway-class   1/1   mcp-gateway
+service/mcp-gateway-data-science-gateway-class           LoadBalancer   <pending>
+----
+
+Note the Service name. It is `<gateway-name>-<gatewayclass-name>`, and that string is needed twice later: for the Route in Step 3 and for `privateHost` in xref:03-mcp-gateway-extension.adoc#privatehost[Phase 3]. Read it, never assume it:
+
+[source,bash]
+----
+export GW_SVC=$(oc get svc -n "$GATEWAY_NAMESPACE" \
+  -l gateway.networking.k8s.io/gateway-name=mcp-gateway \
+  -o jsonpath=\x27{.items[0].metadata.name}\x27)
+echo "Gateway Service: $GW_SVC"
+----
 
 === Step 3: Create the OpenShift Route
 
@@ -81,7 +122,56 @@ The `istio` GatewayClass creates a LoadBalancer service, but on bare-metal or wo
 envsubst < manifests/02-gateway-setup/route.yaml.tmpl | oc apply -f -
 ----
 
-This creates an edge-TLS Route that bridges external traffic from the default HAProxy ingress controller to the gateway service on port 8080.
+This creates an edge-TLS Route that bridges external traffic from the default HAProxy ingress controller to the gateway service on port 8080. The template resolves the backend Service as `+mcp-gateway-${GATEWAY_CLASS}+`, which is why `GATEWAY_CLASS` has to be exported in Step 1.
+
+WARNING: A Route whose `spec.to.name` points at a Service that does not exist is still `Admitted=True`. It answers `503` and nothing in `oc get route` hints at why. If you see `503` in the verification below, check the Service name first:
+`oc get route mcp-gateway -n "$GATEWAY_NAMESPACE" -o jsonpath=\x27{.spec.to.name}{"\\n"}\x27` against `$GW_SVC`.
+
+=== Step 4: Clusters Without a Load Balancer
+
+Most Gateway API providers create the gateway proxy Service as a `LoadBalancer`. On bare metal, in workshop clusters and anywhere without MetalLB or a cloud provider it stays `<pending>` forever:
+
+[source,bash]
+----
+oc get svc "$GW_SVC" -n "$GATEWAY_NAMESPACE"
+----
+
+[source]
+----
+NAME                                     TYPE           EXTERNAL-IP   PORT(S)
+mcp-gateway-data-science-gateway-class   LoadBalancer   <pending>     15021:30618/TCP,8080:30622/TCP
+----
+
+The Route from Step 3 does not care - it targets the Service's ClusterIP and ignores the LoadBalancer entirely, so this is cosmetic and you can leave it. If you would rather not carry a permanently pending LoadBalancer (it also holds a NodePort), switch the Service to `ClusterIP` through the Gateway's `infrastructure.parametersRef`:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-gateway-infra
+  namespace: ${GATEWAY_NAMESPACE}
+data:
+  service: |
+    spec:
+      type: ClusterIP
+EOF
+
+oc patch gateway mcp-gateway -n "$GATEWAY_NAMESPACE" --type=merge -p \x27{
+  "spec": {"infrastructure": {"parametersRef": {
+    "group": "", "kind": "ConfigMap", "name": "mcp-gateway-infra"}}}
+}\x27
+----
+
+The ConfigMap holds a partial Service manifest under the `service` key, which the provider merges over the Service it generates. Confirm the change:
+
+[source,bash]
+----
+oc get svc "$GW_SVC" -n "$GATEWAY_NAMESPACE" -o jsonpath=\x27{.spec.type}{"\\n"}\x27
+----
+
+NOTE: `infrastructure.parametersRef` is how OpenShift AI configures its own `data-science-gateway`, so on a cluster that already has one you can copy the pattern from `oc get cm data-science-gateway-config -n openshift-ingress -o yaml`. Support for the field depends on the provider - Istio-based classes honour it; verify before relying on it elsewhere.
 
 == Verification
 
@@ -136,6 +226,8 @@ curl -sk -o /dev/null -w "HTTP %{http_code}\n" "https://${MCP_HOSTNAME}/mcp"
 
 A `404` is a *success* at this stage: TLS terminated, the Route reached Envoy, and Envoy had no matching route yet because the broker does not exist. A connection error or `503` means the Route or Gateway is not wired up.
 
+NOTE: Only run this check *before* xref:03-mcp-gateway-extension.adoc[Phase 3]. Once the broker exists, a plain `GET /mcp` returns `200` and opens an SSE stream instead, so the same command appears to hang and curl exits with code `18`. From Phase 3 onwards, verify with the JSON-RPC `POST` flow in xref:05-verification.adoc[Phase 5].
+
 [#tls-termination-options]
 == TLS Termination Options
 
@@ -165,6 +257,21 @@ Switching to `reencrypt` or `passthrough` is not just a Route edit - it requires
 
 . *Change the listener to HTTPS.* Set `protocol: HTTPS` and `port: 8443` on the `mcp` listener and add `tls.certificateRefs` pointing at a Secret holding a certificate for `mcp.<cluster-domain>`.
 . *Provide that certificate.* Either issue one with cert-manager (a `Certificate` whose `secretName` matches the `certificateRefs` entry) or create the TLS Secret manually. The cluster wildcard certificate is not usable here because it is owned by the ingress operator.
++
+Do not assume the `*.apps` certificate lives in a Secret called `default-ingress-cert`. That name is only the operator-generated default, and in most customer clusters it has been replaced. Ask the IngressController which Secret is actually serving:
++
+[source,bash]
+----
+oc get ingresscontroller default -n openshift-ingress-operator \
+  -o jsonpath=\x27{.spec.defaultCertificate.name}{"\\n"}\x27
+----
++
+An empty result means the operator-generated certificate is in use, and the CA to trust is the `default-ingress-cert` ConfigMap in `openshift-config-managed`. A non-empty result is the Secret name, in `openshift-ingress`, and it is whatever the cluster owner chose - on the cluster this guide was tested against it is `cert-manager-ingress-cert`. Either way, read it rather than hardcoding a name:
++
+[source,bash]
+----
+oc get secret -n openshift-ingress --field-selector type=kubernetes.io/tls -o name
+----
 . *Repoint the Route.* Target the listener's new port and set the matching `termination`. With `passthrough`, the Route carries no certificate of its own and the client's SNI must match the listener hostname exactly, so the Route `host` and the listener `hostname` have to agree.
 
 WARNING: With `passthrough`, `insecureEdgeTerminationPolicy: Redirect` is invalid - only `None` is accepted. Leaving the `Redirect` value from the edge template in place will cause the Route to be rejected.

@@ -10,6 +10,32 @@ The MCP protocol uses a JSON-RPC session-based flow. To verify the gateway is wo
 2. *List tools* using the session ID to discover all aggregated tools
 3. *Call a tool* to verify end-to-end connectivity
 
+[IMPORTANT]
+====
+All three steps are required. Stopping after `initialize`, or after `oc get mcpsr -A` shows `Ready`, is the single most common way to sign off a broken install.
+
+Each check covers a different part of the path, and only the last one crosses the Gateway twice:
+
+[cols="1,3", options="header"]
+|===
+| Check | What it actually proves
+
+| `oc get mcpsr -A` is `Ready` with a `TOOLS` count
+| The *controller* reached the backend and read its tool list. Says nothing about the data path.
+
+| `initialize` returns server capabilities
+| The Route, the Gateway listener and the broker are reachable. The request never leaves the broker.
+
+| `tools/list` returns prefixed tools
+| The broker has an aggregated list cached. Still served from the broker.
+
+| `tools/call` returns a result
+| *The only check that exercises the full path*: router rewrites `:authority`, Envoy re-routes on the `mcps` listener, the backend answers.
+|===
+
+A wrong `privateHost` or listeners split across two ports passes the first three and fails only the fourth - see xref:03-mcp-gateway-extension.adoc#privatehost[privateHost] and xref:02-gateway-setup.adoc[the same-port requirement].
+====
+
 == Verification Steps
 
 === Step 1: Get the MCP Gateway Endpoint
@@ -205,9 +231,55 @@ Then connect to `https://\{MCP_HOSTNAME}/mcp` using the Streamable HTTP transpor
 * Check broker logs: `oc logs -n mcp-gateway deployment/mcp-gateway --tail=30`
 * Verify the MCP servers are running: `oc get pods -n mcp-test`
 
+=== 503 Instead of a JSON-RPC Response
+
+The Route was admitted but its backend Service does not exist. `oc get route` looks perfectly healthy in this state. Compare the Route's target with the real gateway Service name:
+
+[source,bash]
+----
+oc get route mcp-gateway -n "$GATEWAY_NAMESPACE" -o jsonpath='{.spec.to.name}{"\n"}'
+oc get svc -n "$GATEWAY_NAMESPACE" -l gateway.networking.k8s.io/gateway-name=mcp-gateway -o name
+----
+
+The Service is `<gateway-name>-<gatewayclass-name>`, so it is only `mcp-gateway-istio` on the `istio` GatewayClass.
+
 === 404 Instead of a JSON-RPC Response
 
 The Route reached Envoy but Envoy had no matching route. Usually the `MCPGatewayExtension` is missing or not Ready, so no HTTPRoute was created for the broker: `oc get mcpgatewayextension -n mcp-gateway` and `oc get httproute -n mcp-gateway`.
+
+=== tools/call Fails With "no such host"
+
+`initialize` and `tools/list` work, `tools/call` returns:
+
+[source]
+----
+failed to create session for mcp server: ... Post
+"http://mcp-gateway-istio.mcp-gateway.svc.cluster.local:8080/mcp": ... no such host
+----
+
+The broker is dialling a gateway Service that does not exist. This is the `privateHost` default, which assumes the `istio` GatewayClass naming. Compare the two:
+
+[source,bash]
+----
+oc get mcpgatewayextension mcp-extension -n mcp-gateway -o jsonpath='{.spec.privateHost}{"\n"}'
+oc get svc -n "$GATEWAY_NAMESPACE" -l gateway.networking.k8s.io/gateway-name=mcp-gateway -o name
+----
+
+Fix it as described in xref:03-mcp-gateway-extension.adoc#privatehost[Setting privateHost], then restart the broker.
+
+=== tools/call Fails But the Host Resolves
+
+If `privateHost` is correct and `tools/call` still fails, check that the public listener and the `*.mcp.local` listener share one port. The `ext_proc` filter is attached to a single port, so a split layout breaks `tools/call` only:
+
+[source,bash]
+----
+oc get gateway mcp-gateway -n "$GATEWAY_NAMESPACE" \
+  -o jsonpath='{range .spec.listeners[*]}{.name}{"\t"}{.port}{"\n"}{end}'
+
+oc get envoyfilter -n "$GATEWAY_NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.configPatches[*].match.listener.portNumber}{"\n"}{end}'
+----
+
+Both listener ports must equal the EnvoyFilter's `portNumber`. See xref:02-gateway-setup.adoc[Phase 2] for why.
 
 === Connection Refused
 

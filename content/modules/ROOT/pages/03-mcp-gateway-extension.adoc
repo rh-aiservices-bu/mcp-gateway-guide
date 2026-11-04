@@ -14,7 +14,19 @@ Applying it triggers the controller to create three things:
 
 Key fields used here:
 
-* `targetRef` - the Gateway to extend, plus the listener via `sectionName` (must match a listener name on the Gateway; here `mcp`)
+* `targetRef` - the Gateway to extend, plus the listener via `sectionName` (must match a listener name on the Gateway; here `mcp`). It takes the listener's `name`, never its hostname or protocol. Name a listener that does not exist and the controller attaches nothing, creates no HTTPRoute, and the endpoint stays a 404. Check the names you actually have before applying:
++
+[source,bash]
+----
+oc get gateway mcp-gateway -n "$GATEWAY_NAMESPACE" \
+  -o jsonpath='{range .spec.listeners[*]}{.name}{"\t"}{.port}{"\t"}{.hostname}{"\n"}{end}'
+----
++
+[source]
+----
+mcp     8080    mcp.apps.cluster-example.com
+mcps    8080    *.mcp.local
+----
 * `httpRouteManagement: Enabled` - let the controller own the HTTPRoute
 
 The CRD has several other fields worth knowing about:
@@ -95,7 +107,46 @@ EOF
 
 The extension's `privateHost` field tells the broker which address to dial when it re-enters the Gateway on the `mcps` listener. Left unset, it defaults to a name derived from the `istio` GatewayClass convention (`<gateway-name>-istio.<namespace>.svc.cluster.local`).
 
-WARNING: On Track B that default points at a Service that *does not exist*, and every `MCPServerRegistration` will stay `NotReady` with connection errors. Set it explicitly to the gateway proxy Service.
+[WARNING]
+====
+On Track B that default points at a Service that *does not exist*. The failure is far nastier than a `NotReady` registration, because almost everything still works:
+
+[cols="1,1,3", options="header"]
+|===
+| Check | Result | Why
+
+| `oc get mcpgatewayextension`
+| `Ready=True`
+| The field is never resolved against the cluster, so a bogus host still validates
+
+| `oc get mcpsr -A`
+| `Ready=True`, correct `TOOLS` count
+| Tool discovery runs from the broker straight to the backend Service, not through `privateHost`
+
+| `initialize`
+| works
+| Handled by the broker itself
+
+| `tools/list`
+| works
+| Served from the cached, aggregated tool list
+
+| `tools/call`
+| *fails*
+| The only call that hair-pins back through the Gateway
+|===
+
+The error surfaces only on `tools/call`, and it names the Service that is missing:
+
+[source]
+----
+failed to create session for mcp server: failed to create client: transport error:
+failed to send request: Post "http://mcp-gateway-istio.mcp-gateway.svc.cluster.local:8080/mcp":
+dial tcp: lookup mcp-gateway-istio.mcp-gateway.svc.cluster.local on 172.231.0.10:53: no such host
+----
+
+If you only ever run `initialize`, this install looks finished. Always run a real `tools/call` - see xref:05-verification.adoc[Phase 5].
+====
 
 Find the real Service and set the field:
 
@@ -108,6 +159,19 @@ oc patch mcpgatewayextension mcp-extension -n mcp-gateway --type=merge -p "{
   \"spec\": {\"privateHost\": \"<service-name>.${GATEWAY_NAMESPACE}.svc.cluster.local:8080\"}
 }"
 ----
+
+Or without substituting the name by hand, reusing `GW_SVC` from xref:02-gateway-setup.adoc[Phase 2 Step 2]:
+
+[source,bash]
+----
+oc patch mcpgatewayextension mcp-extension -n mcp-gateway --type=merge -p "{
+  \"spec\": {\"privateHost\": \"${GW_SVC}.${GATEWAY_NAMESPACE}.svc.cluster.local:8080\"}
+}"
+
+oc rollout restart deployment/mcp-gateway -n mcp-gateway
+----
+
+The port must be the shared listener port from xref:02-gateway-setup.adoc[Phase 2] (`8080` here), and the broker needs a restart to pick the new value up.
 
 == Verification
 
@@ -174,6 +238,46 @@ mcp-ext-proc-mcp-gateway-gateway   12s
 ----
 oc logs -n mcp-gateway deployment/mcp-gateway-controller --tail=20
 ----
+
+[#rules-changed]
+=== "unknown field spec.rules[].name" in the controller logs
+
+On a cluster whose Gateway API CRDs are older than the controller expects, every reconcile logs this pair:
+
+[source]
+----
+level=INFO msg="unknown field \"spec.rules[0].name\"" controller=mcpgatewayextension ...
+level=INFO msg="unknown field \"spec.rules[1].name\"" controller=mcpgatewayextension ...
+level=INFO msg="updating gateway httproute" namespace=mcp-gateway reason="rules changed"
+----
+
+The controller writes `spec.rules[].name` on the HTTPRoute it manages. The API server silently drops the field if the installed CRD does not have it, the controller reads the object back, sees its own write missing, and rewrites it - `reason="rules changed"` on a loop. You can confirm the field is being stripped:
+
+[source,bash]
+----
+oc get crd httproutes.gateway.networking.k8s.io \
+  -o jsonpath='{.metadata.annotations.gateway\.networking\.k8s\.io/bundle-version}{"\n"}'
+
+oc get httproute mcp-gateway-route -n mcp-gateway \
+  -o jsonpath='{range .spec.rules[*]}name=[{.name}]{"\n"}{end}'
+----
+
+A `v1.3.0` bundle and empty `name=[]` values mean you have this mismatch. On OpenShift the Gateway API CRDs are managed by the Cluster Ingress Operator, so you cannot simply upgrade them yourself.
+
+It is noisy but *harmless*: the two rules the controller needs (`/mcp` and `/.well-known/oauth-protected-resource`) are written correctly, only the cosmetic rule names are lost. Two details worth knowing before you spend time on it:
+
+* It also produces occasional `Reconciler error ... the object has been modified; please apply your changes to the latest version` lines, from the controller racing its own rewrite. Same cause, same (lack of) impact.
+* It is *not* a permanent hot loop. It burns through rewrites while anything is changing - during install this guide saw 64 - then goes quiet once the configuration settles. Confirm steady state by watching the HTTPRoute stop changing rather than by reading the log:
++
+[source,bash]
+----
+for i in 1 2 3; do
+  oc get httproute mcp-gateway-route -n mcp-gateway -o jsonpath='{.metadata.resourceVersion}{"\n"}'
+  sleep 30
+done
+----
++
+A `resourceVersion` that stops moving means the controller has settled. Upstream `main` already detects the missing field and skips writing it, so this disappears in a later operator build.
 
 == Custom HTTPRoute
 
