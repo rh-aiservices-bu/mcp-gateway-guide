@@ -130,10 +130,23 @@ So there are two layers, not three components side by side. If you go looking fo
 
 For a deep dive into the request flow, see the xref:architecture.adoc[Architecture & Request Flow] page.
 
+== Interactive Diagrams
+
+Two animated visualizers, if you prefer to see the shape of this before reading nine pages of it. Every box is clickable for the detail behind it.
+
+[NOTE]
+====
+link:{attachmentsdir}/install-flow.html[*Install and Configuration visualizer*^] - the nine phases in order, plus the three mistakes that cost the most time: the broker pod that is missing on purpose, the two listeners that must share a port, and why tool authorization needs two policies.
+
+link:{attachmentsdir}/architecture-flow.html[*Architecture and Request Flow visualizer*^] - the runtime path, built from the upstream design docs: tool discovery, prefix routing, the OAuth dance, tool filtering, and token exchange.
+====
+
 == Documentation
 
 * link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[{rhcl} 1.4 {mcp-gw} Official Docs]
 * link:https://docs.kuadrant.io/dev/mcp-gateway/[Upstream MCP Gateway Documentation]
+* link:{attachmentsdir}/install-flow.html[Install and Configuration visualizer^]
+* link:{attachmentsdir}/architecture-flow.html[Architecture and Request Flow visualizer^]
 * link:https://noyitz.github.io/ai-gateway-docs/mcp-gateway/[MCP Gateway Interactive Flow Visualizer]
 * link:https://modelcontextprotocol.io/specification/2025-06-18/[MCP Specification]
 

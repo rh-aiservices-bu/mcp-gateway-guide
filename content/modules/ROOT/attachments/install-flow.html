@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP Gateway on OpenShift - Install &amp; Configuration Visualizer</title>
+<link rel="stylesheet" href="https://noyitz.github.io/flowstory/templates/style.css">
+</head>
+<body>
+<button class="fs-theme-toggle" id="fs-theme">&#9790;</button>
+<div class="fs-title" id="fs-title"></div>
+<div class="fs-panel">
+  <div class="fs-flow-bar">
+    <select id="fs-flow-select"></select>
+    <button class="fs-start" id="fs-play">&#9654; Start</button>
+    <button id="fs-speed">1x</button>
+    <button id="fs-loop">&#8635; Loop</button>
+    <button class="fs-reset" id="fs-reset">Reset</button>
+  </div>
+  <div class="fs-steps" id="fs-steps">
+    <div class="fs-steps-title">Flow Steps</div>
+    <div id="fs-steps-container"></div>
+  </div>
+</div>
+<div id="fs-highlight-box" style="display:none;position:fixed;z-index:350;border-radius:10px;pointer-events:none"></div>
+<div id="fs-overlay" style="display:none;position:fixed;top:0;left:0;right:380px;bottom:0;z-index:300;background:rgba(0,0,0,0.6)">
+  <div id="fs-overlay-card" style="position:absolute;background:#161b22ee;border:1px solid #30363d;border-radius:14px;max-width:440px;padding:22px 26px;box-shadow:0 12px 40px rgba(0,0,0,0.5);transition:opacity .2s">
+    <button id="fs-overlay-close" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#8b949e;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:6px">&#10005;</button>
+    <div id="fs-overlay-accent" style="width:4px;height:24px;border-radius:2px;position:absolute;left:0;top:22px"></div>
+    <h2 id="fs-overlay-title" style="margin:0 0 6px;font-size:18px;color:#c9d1d9;font-family:system-ui"></h2>
+    <p id="fs-overlay-desc" style="margin:0 0 14px;font-size:13px;color:#8b949e;line-height:1.5;font-family:system-ui"></p>
+    <div id="fs-overlay-details" style="font-size:12px;font-family:'SF Mono',Menlo,monospace"></div>
+    <button id="fs-overlay-resume" style="margin-top:14px;padding:7px 20px;border:1px solid #3fb950;border-radius:8px;background:transparent;color:#3fb950;font-size:13px;cursor:pointer;font-family:system-ui">&#9654; Resume Flow</button>
+  </div>
+</div>
+<div class="fs-legend" id="fs-legend"></div>
+<canvas id="fs-canvas"></canvas>
+<script type="module">
+import { FlowStory } from 'https://noyitz.github.io/flowstory/src/index.js';
+
+const el = id => document.getElementById(id);
+
+const viz = new FlowStory(el('fs-canvas'), {
+  panelElement: document.querySelector('.fs-panel'),
+  flowSelect: el('fs-flow-select'),
+  playBtn: el('fs-play'),
+  speedBtn: el('fs-speed'),
+  loopBtn: el('fs-loop'),
+  resetBtn: el('fs-reset'),
+  stepsContainer: el('fs-steps-container'),
+  overlay: el('fs-overlay'),
+  overlayElement: el('fs-overlay'),
+  overlayCard: el('fs-overlay-card'),
+  overlayTitle: el('fs-overlay-title'),
+  overlayDesc: el('fs-overlay-desc'),
+  overlayDetails: el('fs-overlay-details'),
+  overlayAccent: el('fs-overlay-accent'),
+  overlayClose: el('fs-overlay-close'),
+  overlayResume: el('fs-overlay-resume'),
+  highlightBox: el('fs-highlight-box'),
+  title: el('fs-title'),
+  titleElement: el('fs-title'),
+  legend: el('fs-legend'),
+  legendElement: el('fs-legend'),
+  themeBtn: el('fs-theme')
+});
+
+window.__flowstory = viz;
+
+const diagram = {
+  "meta": {
+    "title": "MCP Gateway Install &amp; Configuration",
+    "author": "mcp-gateway-guide"
+  },
+  "canvas": { "width": 1450, "height": 900 },
+  "nodes": {
+    "admin": { "x": 0, "y": 140, "w": 110, "h": 50, "label": "Admin / CLI", "type": "icon" },
+    "agent": { "x": 0, "y": 420, "w": 110, "h": 50, "label": "AI Agent", "type": "icon" },
+
+    "cluster": { "x": 118, "y": 20, "w": 1302, "h": 830, "type": "boundary", "labelAlign": "left", "label": "OpenShift Cluster · RHCL 1.4" },
+
+    "c1_prereq":  { "x": 130,  "y": 60, "w": 235, "h": 230, "type": "container", "label": "① Operators", "color": "#58a6ff" },
+    "c2_gateway": { "x": 380,  "y": 60, "w": 235, "h": 230, "type": "container", "label": "② Gateway Setup", "color": "#f0883e" },
+    "c3_ext":     { "x": 630,  "y": 60, "w": 250, "h": 230, "type": "container", "label": "③ Gateway Extension", "color": "#3fb950" },
+    "c4_servers": { "x": 895,  "y": 60, "w": 250, "h": 230, "type": "container", "label": "④ Register MCP Servers", "color": "#d2a8ff" },
+    "c5_verify":  { "x": 1160, "y": 60, "w": 230, "h": 230, "type": "container", "label": "⑤ Verification", "color": "#8b949e" },
+
+    "op_ossm":   { "x": 150, "y": 100, "w": 195, "h": 40, "label": "OSSM 3 / Istio", "sublabel": "provides a GatewayClass", "color": "#58a6ff", "fontSize": 13 },
+    "op_mcpgw":  { "x": 150, "y": 148, "w": 195, "h": 40, "label": "MCP Gateway Operator", "sublabel": "OLM · mcp-gateway ns", "color": "#58a6ff", "fontSize": 12 },
+    "n_crds":    { "x": 150, "y": 196, "w": 195, "h": 36, "label": "3 CRDs installed", "color": "#58a6ff", "fontSize": 13 },
+    "n_ctrl":    { "x": 150, "y": 240, "w": 195, "h": 40, "label": "Controller pod", "sublabel": "no broker pod yet", "color": "#58a6ff", "fontSize": 13 },
+
+    "n_gw":       { "x": 400, "y": 100, "w": 195, "h": 40, "label": "Gateway", "sublabel": "mcp-gateway ns", "color": "#f0883e", "fontSize": 14 },
+    "n_lis_mcp":  { "x": 400, "y": 148, "w": 195, "h": 44, "label": "listener  mcp  :8080", "sublabel": "public · mcp.<domain>", "color": "#f0883e", "fontSize": 12 },
+    "n_lis_mcps": { "x": 400, "y": 200, "w": 195, "h": 44, "label": "listener  mcps  :8080", "sublabel": "internal · *.mcp.local", "color": "#f0883e", "fontSize": 12 },
+    "n_route":    { "x": 400, "y": 252, "w": 195, "h": 32, "label": "OpenShift Route · TLS", "color": "#f0883e", "fontSize": 12 },
+
+    "n_ext":      { "x": 650, "y": 100, "w": 210, "h": 44, "label": "MCPGatewayExtension", "sublabel": "sectionName: mcp", "color": "#3fb950", "fontSize": 12 },
+    "n_refgrant": { "x": 650, "y": 152, "w": 210, "h": 36, "label": "ReferenceGrant", "sublabel": "in the Gateway's ns", "color": "#3fb950", "fontSize": 13 },
+    "n_brpod":    { "x": 650, "y": 196, "w": 210, "h": 44, "label": "broker-router pod", "sublabel": "one container · 8080 + 50051", "color": "#3fb950", "fontSize": 13 },
+    "n_envoyf":   { "x": 650, "y": 248, "w": 210, "h": 36, "label": "EnvoyFilter", "sublabel": "registers ext_proc", "color": "#3fb950", "fontSize": 13 },
+
+    "n_srv1":   { "x": 915, "y": 100, "w": 210, "h": 40, "label": "test-server1", "sublabel": "toolPrefix  test1_", "color": "#d2a8ff", "fontSize": 13 },
+    "n_srv2":   { "x": 915, "y": 148, "w": 210, "h": 40, "label": "risk-server", "sublabel": "toolPrefix  risk_", "color": "#d2a8ff", "fontSize": 13 },
+    "n_srvext": { "x": 915, "y": 196, "w": 210, "h": 40, "label": "external-server", "sublabel": "off-cluster · TLS proxy", "color": "#d2a8ff", "fontSize": 12 },
+    "n_reg":    { "x": 915, "y": 244, "w": 210, "h": 40, "label": "MCPServerRegistration", "sublabel": "then restart the broker", "color": "#d2a8ff", "fontSize": 11 },
+
+    "n_init":   { "x": 1180, "y": 104, "w": 190, "h": 40, "label": "initialize", "sublabel": "returns mcp-session-id", "color": "#8b949e", "fontSize": 13 },
+    "n_list":   { "x": 1180, "y": 152, "w": 190, "h": 40, "label": "tools/list", "sublabel": "aggregated + prefixed", "color": "#8b949e", "fontSize": 13 },
+    "n_call":   { "x": 1180, "y": 200, "w": 190, "h": 40, "label": "tools/call", "sublabel": "test1_greet → SSE", "color": "#8b949e", "fontSize": 13 },
+    "n_verify": { "x": 1180, "y": 248, "w": 190, "h": 36, "label": "./scripts/verify.sh", "color": "#8b949e", "fontSize": 12 },
+
+    "c_runtime": { "x": 130, "y": 330, "w": 600, "h": 200, "type": "container", "label": "Resulting Data Plane", "color": "#6e7681" },
+    "n_envoy":   { "x": 160, "y": 385, "w": 150, "h": 60, "label": "Gateway (Envoy)", "sublabel": "Istio-managed", "color": "#6e7681", "fontSize": 13 },
+    "n_router":  { "x": 340, "y": 372, "w": 165, "h": 44, "label": "MCP Router", "sublabel": ":50051  ext_proc", "color": "#6e7681", "fontSize": 13 },
+    "n_broker":  { "x": 340, "y": 426, "w": 165, "h": 44, "label": "MCP Broker", "sublabel": ":8080  /mcp", "color": "#6e7681", "fontSize": 13 },
+    "n_config":  { "x": 535, "y": 385, "w": 170, "h": 60, "label": "mcp-gateway-config", "sublabel": "Secret · read at startup", "color": "#6e7681", "fontSize": 11 },
+
+    "c6_rhbk":    { "x": 130,  "y": 580, "w": 290, "h": 230, "type": "container", "label": "⑥ Red Hat build of Keycloak", "color": "#db61a2" },
+    "c7_auth":    { "x": 435,  "y": 580, "w": 290, "h": 230, "type": "container", "label": "⑦ Authentication", "color": "#ffa657" },
+    "c8_authz":   { "x": 740,  "y": 580, "w": 290, "h": 230, "type": "container", "label": "⑧ Authorization", "color": "#39c5cf" },
+    "c9_virtual": { "x": 1045, "y": 580, "w": 345, "h": 230, "type": "container", "label": "⑨ Virtual MCP Servers", "color": "#79c0ff" },
+
+    "n_rhbk":    { "x": 155, "y": 625, "w": 240, "h": 44, "label": "Keycloak (RHBK)", "sublabel": "realm import · mcp", "color": "#db61a2", "fontSize": 13 },
+    "n_clients": { "x": 155, "y": 677, "w": 240, "h": 40, "label": "resource-server clients", "sublabel": "mcp-test/<registration>", "color": "#db61a2", "fontSize": 12 },
+    "n_roles":   { "x": 155, "y": 725, "w": 240, "h": 40, "label": "client roles", "sublabel": "tool:<unprefixed-name>", "color": "#db61a2", "fontSize": 13 },
+
+    "n_oauthpr":  { "x": 460, "y": 625, "w": 240, "h": 44, "label": "oauthProtectedResource", "sublabel": "set on the Extension", "color": "#ffa657", "fontSize": 12 },
+    "n_kuadrant": { "x": 460, "y": 677, "w": 240, "h": 40, "label": "Kuadrant CR", "sublabel": "Authorino + WASM filter", "color": "#ffa657", "fontSize": 13 },
+    "n_authpol":  { "x": 460, "y": 725, "w": 240, "h": 40, "label": "mcp-auth-policy", "sublabel": "JWT on the mcp listener", "color": "#ffa657", "fontSize": 13 },
+
+    "n_authzpol": { "x": 765, "y": 625, "w": 240, "h": 44, "label": "mcp-authz-policy", "sublabel": "CEL on the mcps listener", "color": "#39c5cf", "fontSize": 13 },
+    "n_hdr":      { "x": 765, "y": 677, "w": 240, "h": 40, "label": "x-mcp-toolname", "sublabel": "+ x-mcp-servername / method", "color": "#39c5cf", "fontSize": 13 },
+    "n_claim":    { "x": 765, "y": 725, "w": 240, "h": 40, "label": "resource_access claim", "sublabel": "roles per MCP server", "color": "#39c5cf", "fontSize": 12 },
+
+    "n_vs":    { "x": 1070, "y": 625, "w": 295, "h": 44, "label": "MCPVirtualServer", "sublabel": "risk-analysis · basic-tools", "color": "#79c0ff", "fontSize": 13 },
+    "n_merge": { "x": 1070, "y": 677, "w": 295, "h": 40, "label": "merge-virtualserver-config.sh", "sublabel": "into the mcp-system Secret", "color": "#79c0ff", "fontSize": 11 },
+    "n_vshdr": { "x": 1070, "y": 725, "w": 295, "h": 40, "label": "X-Mcp-Virtualserver header", "sublabel": "namespace/name", "color": "#79c0ff", "fontSize": 12 }
+  },
+  "tooltips": {
+    "admin": {
+      "title": "Admin / CLI",
+      "description": "Cluster-admin running the nine phases by hand, or the single end-to-end script. Every phase exports shell variables that later phases reuse, so work in one shell session.",
+      "details": [
+        ["Script", "./scripts/setup-mcp-gateway.sh"],
+        ["Default phases", "1 2 3 4 5 (auth phases are opt-in)"],
+        ["Exports", "CLUSTER_DOMAIN, MCP_HOSTNAME, GATEWAY_CLASS, GATEWAY_NAMESPACE, KEYCLOAK_ISSUER"],
+        ["Requires", "OCP 4.19+, cluster-admin, envsubst/curl/jq/python3"]
+      ]
+    },
+    "agent": {
+      "title": "AI Agent (MCP client)",
+      "description": "Any MCP client. It sees one endpoint and one aggregated tool set, with no idea how many MCP servers sit behind the gateway.",
+      "details": [
+        ["Endpoint", "https://mcp.<cluster-domain>/mcp"],
+        ["Auth", "Authorization: Bearer <JWT from RHBK>"],
+        ["Scoping", "X-Mcp-Virtualserver: mcp-system/<name>"]
+      ]
+    },
+    "op_ossm": {
+      "title": "OpenShift Service Mesh 3 (Istio)",
+      "description": "Istio is used only as a Gateway API provider - just istiod programming the Gateway's Envoy proxy. No sidecars, no ambient mode, no service mesh. Skip this if the cluster already has a GatewayClass (Track B).",
+      "details": [
+        ["Provides", "GatewayClass, Envoy proxy pod"],
+        ["Track A", "no GatewayClass yet, install OSSM 3"],
+        ["Track B", "reuse an existing GatewayClass"]
+      ]
+    },
+    "op_mcpgw": {
+      "title": "MCP Gateway Operator",
+      "description": "Installed via OLM into the mcp-gateway namespace. It installs the CRDs and runs the controller. An AllNamespaces OperatorGroup is required.",
+      "details": [
+        ["Namespace", "mcp-gateway (or openshift-operators)"],
+        ["Install mode", "AllNamespaces"],
+        ["Known issue", "OSDOCS-21434 - OperatorGroup install mode"]
+      ],
+      "links": [["Phase 1 of the guide", "../01-prerequisites.html"]]
+    },
+    "n_crds": {
+      "title": "The three CRDs",
+      "description": "All of mcp.kuadrant.io/v1alpha1. These are the only API surface you configure the gateway through.",
+      "details": [
+        ["MCPGatewayExtension", "connects the gateway to a listener"],
+        ["MCPServerRegistration", "registers an MCP server via HTTPRoute"],
+        ["MCPVirtualServer", "curated tool collections"]
+      ]
+    },
+    "n_ctrl": {
+      "title": "Controller pod - and no broker",
+      "description": "After Phase 1 the only MCP Gateway pod is the controller. The broker does not exist yet and nothing is wrong. It is created by the controller in Phase 3, once an MCPGatewayExtension exists, and it lands in the extension's namespace.",
+      "details": [
+        ["Watches", "MCPGatewayExtension, MCPServerRegistration, MCPVirtualServer"],
+        ["Writes", "the mcp-gateway-config Secret"],
+        ["Creates", "the broker-router Deployment + EnvoyFilter"],
+        ["See also", "the \"Missing Broker Pod\" flow"]
+      ]
+    },
+    "n_gw": {
+      "title": "Gateway",
+      "description": "A Gateway API Gateway in the mcp-gateway namespace, with two listeners that must share one port. The MCP Gateway attaches to it through the extension's sectionName.",
+      "details": [
+        ["Namespace", "mcp-gateway"],
+        ["Listeners", "mcp (public) + mcps (internal)"],
+        ["Provider", "the GatewayClass chosen in Phase 1"]
+      ]
+    },
+    "n_lis_mcp": {
+      "title": "listener: mcp (public, port 8080)",
+      "description": "The listener MCP clients connect to, on a DNS-resolvable hostname. The ext_proc router intercepts every request on this listener, so other workloads belong on a different port.",
+      "details": [
+        ["Hostname", "mcp.<cluster-domain>"],
+        ["Port", "8080"],
+        ["Protocol", "HTTP (TLS at the Route)"],
+        ["Default backend", "the MCP Broker"]
+      ]
+    },
+    "n_lis_mcps": {
+      "title": "listener: mcps (internal, port 8080)",
+      "description": "A wildcard listener the per-server HTTPRoutes attach to. Its hostnames are never DNS-resolvable - they exist purely so the router has an :authority value to rewrite to. It must be on the SAME port as the public listener.",
+      "details": [
+        ["Hostname", "*.mcp.local"],
+        ["Port", "8080 - same as mcp"],
+        ["Why same port", "HTTP listeners on one port share one Envoy route table"],
+        ["Known issue", "OSDOCS-24039 / OSDOCS-24041"]
+      ],
+      "links": [["Phase 2 of the guide", "../02-gateway-setup.html"]]
+    },
+    "n_route": {
+      "title": "OpenShift Route",
+      "description": "Both listeners are plain HTTP on 8080; the Route terminates TLS in front of the Gateway. Going HTTPS all the way to the Gateway means one listener with a wildcard hostname, because each TLS filter chain gets its own route table.",
+      "details": [
+        ["Termination", "edge"],
+        ["Host", "mcp.<cluster-domain>"],
+        ["Known issue", "OSDOCS-24042, OSDOCS-21439"]
+      ]
+    },
+    "n_ext": {
+      "title": "MCPGatewayExtension",
+      "description": "The resource that turns a plain Gateway into an MCP Gateway. Creating it is what finally produces a broker. sectionName picks the listener, and that listener's port becomes the binding key for which registrations this extension receives.",
+      "details": [
+        ["sectionName", "mcp"],
+        ["Creates", "broker-router Deployment, EnvoyFilter, HTTPRoute"],
+        ["privateHost", "set explicitly on a non-Istio GatewayClass"],
+        ["Known issues", "OSDOCS-24040, OSDOCS-21435, CONNLINK-1936"]
+      ],
+      "links": [["Phase 3 of the guide", "../03-mcp-gateway-extension.html"]]
+    },
+    "n_refgrant": {
+      "title": "ReferenceGrant",
+      "description": "Needed for the cross-namespace reference between the extension and the Gateway. It must live in the namespace of the resource being referenced - the Gateway's namespace, not the extension's. On Track B that is openshift-ingress.",
+      "details": [
+        ["Lives in", "the Gateway's namespace"],
+        ["Track B", "openshift-ingress"],
+        ["Symptom if wrong", "extension never reaches Ready"]
+      ]
+    },
+    "n_brpod": {
+      "title": "broker-router pod",
+      "description": "The broker and the router are not two components. One binary, one container, two ports: 8080 serves the MCP protocol, 50051 serves gRPC for the Envoy ext_proc filter, and 8181 serves its config. A single rollout restart restarts both, and a crash takes out both at once.",
+      "details": [
+        ["Deployment", "mcp-gateway"],
+        ["Namespace", "the extension's namespace"],
+        ["Ports", "8080 broker, 50051 router, 8181 config"],
+        ["Restart", "oc rollout restart deployment/mcp-gateway"]
+      ]
+    },
+    "n_envoyf": {
+      "title": "EnvoyFilter (ext_proc)",
+      "description": "Registers the router as an Envoy external processor on the target Gateway, with INSERT_FIRST ordering so the router parses the JSON-RPC body before Kuadrant's WASM filter evaluates policy.",
+      "details": [
+        ["Filter order", "1 ext_proc, 2 WASM, 3 Router"],
+        ["Body mode", "BUFFERED - required for header mutation"],
+        ["failure_mode_allow", "false - router down means requests rejected"]
+      ]
+    },
+    "n_srv1": {
+      "title": "test-server1",
+      "description": "An in-cluster MCP server deployed in mcp-test. Its tools are exposed through the gateway with the test1_ prefix, which is also what the router parses to pick a backend.",
+      "details": [
+        ["Namespace", "mcp-test"],
+        ["toolPrefix", "test1_"],
+        ["HTTPRoute host", "server1.mcp.local"],
+        ["Tool count", "read it from oc get mcpsr -A, never from a doc"]
+      ]
+    },
+    "n_srv2": {
+      "title": "risk-server",
+      "description": "The second in-cluster MCP server, exposing loan and credit-risk tools. It is the one used to show curated access through a virtual server in Phase 9.",
+      "details": [
+        ["Namespace", "mcp-test"],
+        ["toolPrefix", "risk_"],
+        ["Tools", "calculate_dti, calculate_ltv, evaluate_credit_risk, ..."]
+      ]
+    },
+    "n_srvext": {
+      "title": "external-server (off-cluster)",
+      "description": "You cannot point a registration straight at an external URL - it targets an HTTPRoute, and the broker needs an in-cluster address it can reach. The pattern that works is a TLS-origination proxy in the cluster that the HTTPRoute points at.",
+      "details": [
+        ["Pattern", "Service + proxy doing TLS origination"],
+        ["Client tokens", "forwarded independently of credentialRef"],
+        ["RFE", "RHAIRFE-3786 - one-step external registration"]
+      ],
+      "links": [["Phase 4 of the guide", "../04-register-mcp-servers.html"]]
+    },
+    "n_reg": {
+      "title": "MCPServerRegistration",
+      "description": "Targets an HTTPRoute and adds a toolPrefix plus an optional credentialRef. Right after you create one it reports READY: False with no tools - that is expected, because the broker only reads its config at startup. Restart the broker.",
+      "details": [
+        ["targetRef", "the server's HTTPRoute"],
+        ["credentialRef", "optional - unauthenticated backends need none"],
+        ["After creating", "oc rollout restart deployment/mcp-gateway"],
+        ["Check", "oc get mcpsr -A"],
+        ["Known issue", "OSDOCS-24043"]
+      ]
+    },
+    "n_init": {
+      "title": "initialize",
+      "description": "The first JSON-RPC call. The router does not re-route it, so it reaches the broker as the default backend for /mcp. The broker answers with its capabilities and the mcp-session-id the client must send on every later request.",
+      "details": [
+        ["Method", "POST /mcp - initialize"],
+        ["Handled by", "the MCP Broker"],
+        ["Returns", "mcp-session-id header"]
+      ]
+    },
+    "n_list": {
+      "title": "tools/list",
+      "description": "The broker returns one aggregated list from every registered server, each tool carrying its server's prefix, plus the gateway's own discovery meta-tools. With auth in place the list is filtered to what the caller is allowed to see.",
+      "details": [
+        ["Handled by", "the MCP Broker"],
+        ["Prefixed", "test1_greet, risk_calculate_dti, ..."],
+        ["Meta-tools", "discover_tools, select_tools"],
+        ["Filtering", "signed x-mcp-authorized header"]
+      ]
+    },
+    "n_call": {
+      "title": "tools/call",
+      "description": "The only call that gets re-routed. The response comes back as Server-Sent Events, so the JSON payload sits in a data: field - extract it with grep '^data: ' before piping to jq.",
+      "details": [
+        ["Content-Type", "text/event-stream"],
+        ["Path", "re-routed to the backend, never to the broker"],
+        ["Known issue", "OSDOCS-24044 - verification stopped at initialize"]
+      ]
+    },
+    "n_verify": {
+      "title": "verify.sh",
+      "description": "Runs the whole Phase 5 sequence end to end: endpoint discovery, initialize, session capture, tools/list and a real tool call.",
+      "details": [
+        ["Run", "./scripts/verify.sh"],
+        ["Covers", "initialize, tools/list, tools/call"]
+      ],
+      "links": [["Phase 5 of the guide", "../05-verification.html"]]
+    },
+    "n_envoy": {
+      "title": "Gateway (Envoy)",
+      "description": "The Istio-managed Envoy proxy that carries all MCP traffic. Every MCP request passes through it, which is what makes one consistent set of policies possible.",
+      "details": [
+        ["Managed by", "istiod (Gateway API provider only)"],
+        ["Owns", "the two MCP listeners on port 8080"]
+      ]
+    },
+    "n_router": {
+      "title": "MCP Router (ext_proc)",
+      "description": "Parses and validates the MCP JSON-RPC body, then tells Envoy where the request goes. It owns the :authority header on the MCP listener: the public host for everything except tools/call, the backend's HTTPRoute host for tools/call.",
+      "details": [
+        ["Port", "50051 (gRPC)"],
+        ["Sets", "x-mcp-servername, x-mcp-toolname, mcp-session-id"],
+        ["Strips", "the tool prefix before forwarding"],
+        ["Client-settable", "never - the router parses them from the body"]
+      ]
+    },
+    "n_broker": {
+      "title": "MCP Broker",
+      "description": "The default backend for /mcp. It answers initialize and tools/list, acts as an MCP client to every discovered server, builds the aggregated tool list, and brokers SSE notifications in both directions.",
+      "details": [
+        ["Port", "8080"],
+        ["Handles", "initialize, tools/list, notifications"],
+        ["Never handles", "tools/call - those are re-routed"],
+        ["Reads config", "at startup only"]
+      ]
+    },
+    "n_config": {
+      "title": "mcp-gateway-config Secret",
+      "description": "A Secret, not a ConfigMap, written by the controller from the registrations and their HTTPRoutes. The broker reads it only at startup - which is the whole reason registering a server needs a broker restart.",
+      "details": [
+        ["Kind", "Secret"],
+        ["Written by", "the controller"],
+        ["Read", "at broker startup only"],
+        ["Consequence", "new server => rollout restart"]
+      ]
+    },
+    "n_rhbk": {
+      "title": "Red Hat build of Keycloak",
+      "description": "The OAuth 2.1 authorization server, deployed with a realm import. The operator ships no OpenShift Route, so this guide disables its Ingress and provides its own Route named keycloak, which every later phase depends on.",
+      "details": [
+        ["Realm", "mcp"],
+        ["Route", "shipped by the guide, named keycloak"],
+        ["Re-import", "delete the realm first - import does not update"],
+        ["Token scope", "openid groups roles"]
+      ],
+      "links": [["Phase 6 of the guide", "../06-deploy-keycloak.html"]]
+    },
+    "n_clients": {
+      "title": "resource-server clients",
+      "description": "One OAuth client per MCP server, whose clientId must match exactly what the gateway puts in the x-mcp-servername header: <namespace>/<registration-name>.",
+      "details": [
+        ["clientId format", "<namespace>/<registration-name>"],
+        ["Example", "mcp-test/external-server"],
+        ["Must match", "the x-mcp-servername header, exactly"]
+      ]
+    },
+    "n_roles": {
+      "title": "tool: client roles",
+      "description": "Each tool becomes a client role named tool:<name>, using the tool name WITHOUT the registration prefix. The tool exposed as dw_read_wiki_structure needs the role tool:read_wiki_structure.",
+      "details": [
+        ["Format", "tool:<unprefixed-tool-name>"],
+        ["Exposed as", "dw_read_wiki_structure"],
+        ["Role needed", "tool:read_wiki_structure"],
+        ["Also needed", "a clientScopeMapping to the mcp-gateway client"]
+      ]
+    },
+    "n_oauthpr": {
+      "title": "oauthProtectedResource",
+      "description": "Set OAuth on the MCPGatewayExtension, not with oc set env on the broker. The operator reconciles that Deployment and will overwrite environment variables you set by hand.",
+      "details": [
+        ["Field", "MCPGatewayExtension.spec.oauthProtectedResource"],
+        ["Serves", "/.well-known/oauth-protected-resource/mcp"],
+        ["Do not use", "oc set env on the broker Deployment"]
+      ]
+    },
+    "n_kuadrant": {
+      "title": "Kuadrant CR",
+      "description": "Creating it deploys Authorino and the WASM filter that enforces AuthPolicy per request. The OperatorGroup has to be in AllNamespaces mode - and a correctly configured one reports {\"upgradeStrategy\":\"Default\"}, not an empty object.",
+      "details": [
+        ["Deploys", "Authorino, Limitador, WASM filter"],
+        ["OperatorGroup", "AllNamespaces (no targetNamespaces)"],
+        ["After creating", "restart the Gateway deployment"]
+      ]
+    },
+    "n_authpol": {
+      "title": "mcp-auth-policy",
+      "description": "Validates the JWT on the public mcp listener. Unauthenticated requests outside /.well-known get a 401 with a WWW-Authenticate header pointing at the resource metadata, which is how a client discovers where to authenticate.",
+      "details": [
+        ["Listener", "mcp (public)"],
+        ["Does", "JWT validation against the RHBK issuer"],
+        ["On failure", "401 + WWW-Authenticate: resource_metadata=..."],
+        ["Keep it", "Phase 8 adds a second policy, it does not replace this one"]
+      ],
+      "links": [["Phase 7 of the guide", "../07-authentication.html"]]
+    },
+    "n_authzpol": {
+      "title": "mcp-authz-policy",
+      "description": "Tool-level authorization on the internal mcps listener, where the x-mcp-toolname and x-mcp-servername headers exist. Both AuthPolicies must coexist: this one does not replace the Phase 7 policy.",
+      "details": [
+        ["Listener", "mcps (internal)"],
+        ["Evaluates", "CEL against resource_access"],
+        ["Check both", "ENFORCED=True on mcp-auth-policy AND mcp-authz-policy"]
+      ],
+      "links": [["Phase 8 of the guide", "../08-authorization.html"]]
+    },
+    "n_hdr": {
+      "title": "x-mcp-toolname / servername / method",
+      "description": "Router-set from the JSON-RPC body, parsed before AuthPolicy is evaluated, and never settable by a client. The policy also requires x-mcp-method == tools/call, so that session setup is not denied.",
+      "details": [
+        ["x-mcp-toolname", "the tool being called"],
+        ["x-mcp-servername", "<namespace>/<registration-name>"],
+        ["x-mcp-method", "must equal tools/call"],
+        ["Without the method guard", "a misleading 500 instead of a clean 403"]
+      ]
+    },
+    "n_claim": {
+      "title": "resource_access claim",
+      "description": "The JWT claim that carries the user's tool roles, grouped per MCP server client. The CEL rule prepends tool: to the header value and looks for it under the entry matching x-mcp-servername.",
+      "details": [
+        ["Shape", "resource_access[<server>].roles"],
+        ["Example", "mcp-test/test-server1 => [tool:greet, ...]"],
+        ["mcp user", "all tools on both servers"],
+        ["restricted user", "tool:greet only"]
+      ]
+    },
+    "n_vs": {
+      "title": "MCPVirtualServer",
+      "description": "A curated subset of the federated tools, so an agent can be handed exactly the tools one job needs instead of the whole catalogue. Virtual servers can reference categories, so new tools in a category appear automatically.",
+      "details": [
+        ["Examples", "risk-analysis, basic-tools"],
+        ["Namespace", "mcp-system - hardcoded by the controller"],
+        ["Selects", "individual tools or whole categories"]
+      ],
+      "links": [["Phase 9 of the guide", "../09-virtual-servers.html"]]
+    },
+    "n_merge": {
+      "title": "merge-virtualserver-config.sh",
+      "description": "The virtual server config has to be merged into the broker's config Secret. Skip it and the broker logs \"failed to get virtual server ... not found\" and every request carrying the header fails, even though the MCPVirtualServer resources look perfectly healthy.",
+      "details": [
+        ["Run", "./scripts/merge-virtualserver-config.sh"],
+        ["Then", "restart the broker"],
+        ["Symptom if skipped", "\"virtual server not found\""]
+      ]
+    },
+    "n_vshdr": {
+      "title": "X-Mcp-Virtualserver header",
+      "description": "The client opts into a virtual server per request with this header. Without it, tools/list returns the full aggregated set. Authorization still applies on top - a virtual server narrows what is offered, it does not grant access.",
+      "details": [
+        ["Format", "namespace/name"],
+        ["Example", "mcp-system/risk-analysis"],
+        ["Omitted", "full aggregated tool list"],
+        ["Interaction", "authorization is still enforced"]
+      ]
+    }
+  },
+  "flows": {
+    "full": {
+      "label": "Full Install (Phases 1-9)",
+      "steps": [
+        { "text": "1. Phase 1 begins - install the operators (./scripts/setup-mcp-gateway.sh)", "mode": "arrow", "from": "admin", "to": "c1_prereq", "color": "#58a6ff", "num": 1, "glow": "c1_prereq" },
+        { "text": "2. Install OSSM 3 so a GatewayClass exists - Track A only, skip it if you already have one", "mode": "lightup", "target": "op_ossm", "badge": 1 },
+        { "text": "3. Subscribe the MCP Gateway operator via OLM, with an AllNamespaces OperatorGroup", "mode": "lightup", "target": "op_mcpgw", "badge": 2 },
+        { "text": "4. The three CRDs land: MCPGatewayExtension, MCPServerRegistration, MCPVirtualServer", "mode": "lightup", "target": "n_crds", "badge": 3 },
+        { "text": "5. Controller pod runs - and there is still no broker pod. That is correct", "mode": "lightup", "target": "n_ctrl", "badge": 4 },
+        { "text": "6. Phase 2 begins - Gateway setup", "mode": "arrow", "from": "c1_prereq", "to": "c2_gateway", "color": "#f0883e", "num": 6, "glow": "c2_gateway" },
+        { "text": "7. Create the Gateway in the mcp-gateway namespace", "mode": "lightup", "target": "n_gw", "badge": 7 },
+        { "text": "8. Add the public mcp listener on port 8080, on a DNS-resolvable host", "mode": "lightup", "target": "n_lis_mcp", "badge": 8 },
+        { "text": "9. Add the internal mcps listener (*.mcp.local) on the SAME port 8080", "mode": "lightup", "target": "n_lis_mcps", "badge": 9 },
+        { "text": "10. Create the OpenShift Route - it terminates TLS in front of the Gateway", "mode": "lightup", "target": "n_route", "badge": 10 },
+        { "text": "11. Phase 3 begins - the MCP Gateway Extension", "mode": "arrow", "from": "c2_gateway", "to": "c3_ext", "color": "#3fb950", "num": 11, "glow": "c3_ext" },
+        { "text": "12. Create the MCPGatewayExtension with sectionName: mcp", "mode": "lightup", "target": "n_ext", "badge": 12 },
+        { "text": "13. Create the ReferenceGrant in the GATEWAY's namespace, not the extension's", "mode": "lightup", "target": "n_refgrant", "badge": 13 },
+        { "text": "14. The controller finally creates the broker-router pod - one container, ports 8080 + 50051", "mode": "lightup", "target": "n_brpod", "badge": 14 },
+        { "text": "15. An EnvoyFilter registers the router as ext_proc on the Gateway", "mode": "lightup", "target": "n_envoyf", "badge": 15 },
+        { "text": "16. Phase 4 begins - register the MCP servers", "mode": "arrow", "from": "c3_ext", "to": "c4_servers", "color": "#d2a8ff", "num": 16, "glow": "c4_servers" },
+        { "text": "17. Deploy test-server1 in mcp-test and give it the test1_ prefix", "mode": "lightup", "target": "n_srv1", "badge": 17 },
+        { "text": "18. Deploy risk-server with the risk_ prefix - HTTPRoutes carry parentRefs.namespace: mcp-gateway", "mode": "lightup", "target": "n_srv2", "badge": 18 },
+        { "text": "19. Register the off-cluster server behind an in-cluster TLS-origination proxy", "mode": "lightup", "target": "n_srvext", "badge": 19 },
+        { "text": "20. Create one MCPServerRegistration per server - they report READY: False at first", "mode": "lightup", "target": "n_reg", "badge": 20 },
+        { "text": "21. The controller writes the mcp-gateway-config Secret - now restart the broker to load it", "mode": "arrow", "from": "n_reg", "to": "n_config", "color": "#d2a8ff", "num": 21, "glow": "c_runtime" },
+        { "text": "22. Phase 5 begins - verification", "mode": "arrow", "from": "c4_servers", "to": "c5_verify", "color": "#8b949e", "num": 22, "glow": "c5_verify" },
+        { "text": "23. initialize returns an mcp-session-id - send it on every later request", "mode": "lightup", "target": "n_init", "badge": 23 },
+        { "text": "24. tools/list returns one aggregated, prefixed list from all three servers", "mode": "lightup", "target": "n_list", "badge": 24 },
+        { "text": "25. tools/call test1_greet comes back as SSE - the JSON is in the data: field", "mode": "lightup", "target": "n_call", "badge": 25 },
+        { "text": "26. ./scripts/verify.sh runs the whole sequence end to end", "mode": "lightup", "target": "n_verify", "badge": 26 },
+        { "text": "27. Phase 6 begins - Red Hat build of Keycloak (optional from here on)", "mode": "arrow", "from": "c5_verify", "to": "c6_rhbk", "color": "#db61a2", "num": 27, "glow": "c6_rhbk" },
+        { "text": "28. Deploy RHBK and import the mcp realm (the guide ships its own Route)", "mode": "lightup", "target": "n_rhbk", "badge": 28 },
+        { "text": "29. One resource-server client per MCP server, clientId = <namespace>/<registration>", "mode": "lightup", "target": "n_clients", "badge": 29 },
+        { "text": "30. One client role per tool, named tool:<name> WITHOUT the registration prefix", "mode": "lightup", "target": "n_roles", "badge": 30 },
+        { "text": "31. Phase 7 begins - authentication", "mode": "arrow", "from": "c6_rhbk", "to": "c7_auth", "color": "#ffa657", "num": 31, "glow": "c7_auth" },
+        { "text": "32. Configure OAuth through the Extension's oauthProtectedResource, never with oc set env", "mode": "lightup", "target": "n_oauthpr", "badge": 32 },
+        { "text": "33. Create the Kuadrant CR - it deploys Authorino and the WASM filter", "mode": "lightup", "target": "n_kuadrant", "badge": 33 },
+        { "text": "34. Apply mcp-auth-policy - JWT validation on the public mcp listener", "mode": "lightup", "target": "n_authpol", "badge": 34 },
+        { "text": "35. Phase 8 begins - authorization", "mode": "arrow", "from": "c7_auth", "to": "c8_authz", "color": "#39c5cf", "num": 35, "glow": "c8_authz" },
+        { "text": "36. Apply mcp-authz-policy on the internal mcps listener - keep BOTH policies", "mode": "lightup", "target": "n_authzpol", "badge": 36 },
+        { "text": "37. The router-set x-mcp-toolname / servername / method headers are what it matches on", "mode": "lightup", "target": "n_hdr", "badge": 37 },
+        { "text": "38. CEL checks tool:<name> against the resource_access roles for that server", "mode": "lightup", "target": "n_claim", "badge": 38 },
+        { "text": "39. Phase 9 begins - virtual MCP servers", "mode": "arrow", "from": "c8_authz", "to": "c9_virtual", "color": "#79c0ff", "num": 39, "glow": "c9_virtual" },
+        { "text": "40. Create the MCPVirtualServer resources in mcp-system", "mode": "lightup", "target": "n_vs", "badge": 40 },
+        { "text": "41. Merge their config into the broker Secret, then restart the broker", "mode": "lightup", "target": "n_merge", "badge": 41 },
+        { "text": "42. Clients opt in per request with X-Mcp-Virtualserver: namespace/name", "mode": "lightup", "target": "n_vshdr", "badge": 42 },
+        { "text": "43. Install complete - one endpoint, one authorized tool set, many MCP servers", "mode": "arrow", "from": "c9_virtual", "to": "agent", "color": "#3fb950", "num": 43 }
+      ]
+    },
+    "broker": {
+      "label": "Gotcha: The Missing Broker Pod",
+      "steps": [
+        { "text": "1. Phase 1 finishes cleanly - operator installed, CSV Succeeded", "mode": "arrow", "from": "admin", "to": "c1_prereq", "color": "#58a6ff", "num": 1, "glow": "c1_prereq" },
+        { "text": "2. The controller pod is running in mcp-gateway", "mode": "lightup", "target": "n_ctrl", "badge": 1 },
+        { "text": "3. You go looking for a broker pod. oc get pods shows only the controller", "mode": "lightup", "target": "n_brpod", "badge": "✗", "errColor": "#f85149" },
+        { "text": "4. Nothing is broken. The broker is layer 2 and does not exist yet", "mode": "arrow", "from": "n_brpod", "to": "admin", "color": "#f85149", "num": 4 },
+        { "text": "5. The broker is created by the controller, on demand, from an extension", "mode": "arrow", "from": "admin", "to": "n_ext", "color": "#3fb950", "num": 5, "glow": "c3_ext" },
+        { "text": "6. Create the MCPGatewayExtension (Phase 3) and wait for Ready", "mode": "lightup", "target": "n_ext", "badge": 6 },
+        { "text": "7. Now the broker-router pod appears - in the EXTENSION's namespace", "mode": "lightup", "target": "n_brpod", "badge": 7 },
+        { "text": "8. Port 50051 of that container is the router (Envoy ext_proc, gRPC)", "mode": "lightup", "target": "n_router", "badge": 8 },
+        { "text": "9. Port 8080 of the SAME container is the broker. One pod, two ports - not two deployments", "mode": "lightup", "target": "n_broker", "badge": 9 },
+        { "text": "10. So one rollout restart restarts both, and a crash takes out both at once", "mode": "arrow", "from": "n_brpod", "to": "n_envoyf", "color": "#3fb950", "num": 10 }
+      ]
+    },
+    "ports": {
+      "label": "Gotcha: Both Listeners, One Port",
+      "steps": [
+        { "text": "1. An agent sends tools/call test1_greet to the public mcp listener on port 8080", "mode": "arrow", "from": "agent", "to": "n_lis_mcp", "color": "#f0883e", "num": 1, "glow": "c2_gateway" },
+        { "text": "2. The public listener is the only DNS-resolvable one: mcp.<cluster-domain>", "mode": "lightup", "target": "n_lis_mcp", "badge": 1 },
+        { "text": "3. ext_proc hands the request to the router before Envoy routes it", "mode": "arrow", "from": "n_lis_mcp", "to": "n_router", "color": "#3fb950", "num": 3, "glow": "c_runtime" },
+        { "text": "4. The router rewrites :authority to server1.mcp.local to pick the backend", "mode": "lightup", "target": "n_router", "badge": 4 },
+        { "text": "5. That host only exists on the internal mcps listener - which is on the same port 8080", "mode": "lightup", "target": "n_lis_mcps", "badge": 5 },
+        { "text": "6. HTTP listeners sharing a port share ONE Envoy route table, so the rewrite resolves", "mode": "arrow", "from": "n_router", "to": "n_srv1", "color": "#3fb950", "num": 6, "glow": "c4_servers" },
+        { "text": "7. Put mcps on a different port (8081) and it gets its own route table", "mode": "lightup", "target": "n_lis_mcps", "badge": "✗", "errColor": "#f85149" },
+        { "text": "8. The rewritten :authority then matches no route - every tools/call fails (OSDOCS-24039)", "mode": "arrow", "from": "n_router", "to": "n_srv1", "color": "#f85149", "num": 8 },
+        { "text": "9. Same trap with HTTPS: each TLS filter chain has its own route table, so use ONE wildcard listener", "mode": "lightup", "target": "n_route", "badge": "i" }
+      ]
+    },
+    "authz": {
+      "label": "Why Tool Authorization Needs Two Policies",
+      "steps": [
+        { "text": "1. An agent calls tools/call test1_greet with a bearer token from RHBK", "mode": "arrow", "from": "agent", "to": "n_lis_mcp", "color": "#ffa657", "num": 1, "glow": "c7_auth" },
+        { "text": "2. mcp-auth-policy validates the JWT on the public mcp listener - and only that", "mode": "lightup", "target": "n_authpol", "badge": 1 },
+        { "text": "3. ext_proc is INSERT_FIRST, so the router parses the JSON-RPC body before any policy runs", "mode": "lightup", "target": "n_router", "badge": 2 },
+        { "text": "4. The router sets x-mcp-toolname, x-mcp-servername and x-mcp-method - a client never can", "mode": "lightup", "target": "n_hdr", "badge": 3 },
+        { "text": "5. :authority is rewritten, so the request now arrives on the internal mcps listener", "mode": "arrow", "from": "n_router", "to": "n_lis_mcps", "color": "#39c5cf", "num": 5, "glow": "c8_authz" },
+        { "text": "6. mcp-authz-policy evaluates there, where the tool headers exist to match against", "mode": "lightup", "target": "n_authzpol", "badge": 6 },
+        { "text": "7. CEL prepends tool: to the tool name and looks it up in resource_access[<server>].roles", "mode": "lightup", "target": "n_claim", "badge": 7 },
+        { "text": "8. The mcp user has every tool: allowed, Envoy forwards with the prefix stripped", "mode": "arrow", "from": "n_authzpol", "to": "n_srv1", "color": "#3fb950", "num": 8 },
+        { "text": "9. The restricted user only holds tool:greet, so risk_calculate_dti comes back 403", "mode": "lightup", "target": "n_claim", "badge": "✗", "errColor": "#f85149" },
+        { "text": "10. The when guard on x-mcp-method == tools/call is what keeps session setup from being denied", "mode": "lightup", "target": "n_hdr", "badge": "i" },
+        { "text": "11. Both policies must coexist - deleting the Phase 7 one breaks JWT validation entirely", "mode": "lightup", "target": "n_authpol", "badge": "i" }
+      ]
+    },
+    "virtual": {
+      "label": "Virtual Servers & Progressive Discovery",
+      "steps": [
+        { "text": "1. An agent connects and asks for tools/list through the public endpoint", "mode": "arrow", "from": "agent", "to": "n_broker", "color": "#79c0ff", "num": 1, "glow": "c_runtime" },
+        { "text": "2. The broker aggregates every registered server's tools into one prefixed list", "mode": "lightup", "target": "n_broker", "badge": 1 },
+        { "text": "3. Federate enough servers and that list becomes the problem - context bloat, worse tool picks", "mode": "lightup", "target": "n_list", "badge": "i" },
+        { "text": "4. Operators pre-curate a scope instead: an MCPVirtualServer in mcp-system", "mode": "arrow", "from": "admin", "to": "n_vs", "color": "#79c0ff", "num": 4, "glow": "c9_virtual" },
+        { "text": "5. risk-analysis and basic-tools each select a subset, or whole categories", "mode": "lightup", "target": "n_vs", "badge": 5 },
+        { "text": "6. Merge the virtual server config into the broker's Secret - this step is easy to miss", "mode": "lightup", "target": "n_merge", "badge": 6 },
+        { "text": "7. Skip the merge and every request with the header fails, though the CRs look healthy", "mode": "lightup", "target": "n_merge", "badge": "✗", "errColor": "#f85149" },
+        { "text": "8. Restart the broker so it reads the merged config at startup", "mode": "arrow", "from": "n_merge", "to": "n_config", "color": "#79c0ff", "num": 8 },
+        { "text": "9. The agent now opts in per request with X-Mcp-Virtualserver: mcp-system/risk-analysis", "mode": "lightup", "target": "n_vshdr", "badge": 9 },
+        { "text": "10. tools/list returns only that scope - omit the header and you get everything again", "mode": "arrow", "from": "n_vshdr", "to": "agent", "color": "#3fb950", "num": 10 },
+        { "text": "11. Authorization still applies on top: a virtual server narrows the offer, it never grants access", "mode": "lightup", "target": "n_authzpol", "badge": "i" }
+      ]
+    }
+  },
+  "flowOrder": ["full", "broker", "ports", "authz", "virtual"],
+  "defaultFlow": "full",
+  "legend": [
+    { "color": "#58a6ff", "label": "Phase 1 · Operators" },
+    { "color": "#f0883e", "label": "Phase 2 · Gateway" },
+    { "color": "#3fb950", "label": "Phase 3 · Extension" },
+    { "color": "#d2a8ff", "label": "Phase 4 · MCP Servers" },
+    { "color": "#8b949e", "label": "Phase 5 · Verification" },
+    { "color": "#db61a2", "label": "Phase 6 · Keycloak" },
+    { "color": "#ffa657", "label": "Phase 7 · Authentication" },
+    { "color": "#39c5cf", "label": "Phase 8 · Authorization" },
+    { "color": "#79c0ff", "label": "Phase 9 · Virtual Servers" },
+    { "color": "#f85149", "label": "Known failure / gotcha" }
+  ]
+};
+
+await viz.load(diagram);
+
+const cvs = el('fs-canvas');
+cvs.addEventListener('mousemove', e => {
+  const rect = cvs.getBoundingClientRect();
+  const eng = viz._engine;
+  const mx = (e.clientX - rect.left - eng._ox) / eng._sc;
+  const my = (e.clientY - rect.top - eng._oy) / eng._sc;
+  let hit = false;
+  for (const [k, n] of Object.entries(eng.state.nodes)) {
+    if (n.type === 'boundary' || n.type === 'container') continue;
+    if (eng.state.tooltips[k] && mx >= n.x && mx <= n.x + n.w && my >= n.y && my <= n.y + n.h) {
+      hit = true;
+      break;
+    }
+  }
+  cvs.style.cursor = hit ? 'pointer' : 'default';
+});
+
+viz.state.loopMode = true;
+viz.play();
+</script>
+</body>
+</html>
