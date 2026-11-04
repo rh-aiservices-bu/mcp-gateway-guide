@@ -334,6 +334,11 @@ manifests/04-register-mcp-servers/
   mcpsr-risk.yaml
 ----
 
+== Related Issues
+
+* link:https://issues.redhat.com/browse/OSDOCS-24043[OSDOCS-24043] - the official docs state that a backend Secret must be created. For unauthenticated servers it is optional and `credentialRef` should be omitted. See <<no-credentials>>.
+* link:https://issues.redhat.com/browse/RHAIRFE-3786[RHAIRFE-3786] - RFE to connect an externally hosted MCP server in one step, with a clear failure reason when it does not work. Until then, see <<external-servers>> for the TLS-origination proxy pattern.
+
 == References
 
 * link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install#mcp-gateway-api-reference_mcp-gateway-install[MCP Gateway API Reference]

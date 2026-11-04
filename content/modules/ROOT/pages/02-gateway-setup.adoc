@@ -309,6 +309,10 @@ manifests/02-gateway-setup/
 == Related Issues
 
 * link:https://issues.redhat.com/browse/OSDOCS-21439[OSDOCS-21439] (was link:https://issues.redhat.com/browse/CONNLINK-1502[CONNLINK-1502]) - DNS Management section missing OpenShift Route as alternative to MetalLB for bare-metal. This guide uses an OpenShift Route for external access instead of MetalLB.
+* link:https://issues.redhat.com/browse/OSDOCS-24039[OSDOCS-24039] (*Critical*) - the Gateway example puts the public listener on `https/443` and the backend listener on `mcps/8080`. Both must share one port. This was the root cause of a customer deployment failure. See the same-port requirement in the Overview.
+* link:https://issues.redhat.com/browse/OSDOCS-24041[OSDOCS-24041] - the install chapter never defines the `*.mcp.local` listener, although the external MCP server chapter requires one. This guide defines it as the `mcps` listener in Step 2.
+* link:https://issues.redhat.com/browse/OSDOCS-24042[OSDOCS-24042] - TLS setup assumes the `default-ingress-cert` Secret. In customer clusters the `*.apps` certificate is usually a different Secret. See <<tls-termination-options>>.
+* link:https://issues.redhat.com/browse/OSDOCS-21439[OSDOCS-21439] - also covers clusters without a load balancer. See Step 4.
 
 == References
 

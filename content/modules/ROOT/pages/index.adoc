@@ -136,3 +136,49 @@ For a deep dive into the request flow, see the xref:architecture.adoc[Architectu
 * link:https://docs.kuadrant.io/dev/mcp-gateway/[Upstream MCP Gateway Documentation]
 * link:https://noyitz.github.io/ai-gateway-docs/mcp-gateway/[MCP Gateway Interactive Flow Visualizer]
 * link:https://modelcontextprotocol.io/specification/2025-06-18/[MCP Specification]
+
+== Known Issues and Upstream Fixes
+
+Findings from field deployments and E2E testing on fresh OCP 4.21 clusters. Each phase page lists the ones relevant to it; this is the full set.
+
+[cols="1,3", options="header"]
+|===
+| Tracker | Scope
+
+| link:https://issues.redhat.com/browse/OSDOCS-24039[OSDOCS-24039] (*Critical*)
+| Public and `*.mcp.local` listeners documented on different ports. Root cause of a customer deployment failure. xref:02-gateway-setup.adoc[Phase 2]
+
+| link:https://issues.redhat.com/browse/OSDOCS-24040[OSDOCS-24040]
+| `sectionName: mcp` does not match any listener in the documented Gateway. xref:03-mcp-gateway-extension.adoc[Phase 3]
+
+| link:https://issues.redhat.com/browse/OSDOCS-24041[OSDOCS-24041]
+| `*.mcp.local` listener missing from the install chapter. xref:02-gateway-setup.adoc[Phase 2]
+
+| link:https://issues.redhat.com/browse/OSDOCS-24042[OSDOCS-24042]
+| TLS setup assumes the `default-ingress-cert` Secret. xref:02-gateway-setup.adoc[Phase 2]
+
+| link:https://issues.redhat.com/browse/OSDOCS-24043[OSDOCS-24043]
+| Backend Secret and `credentialRef` are optional for unauthenticated servers. xref:04-register-mcp-servers.adoc[Phase 4]
+
+| link:https://issues.redhat.com/browse/OSDOCS-24044[OSDOCS-24044]
+| Verification stops at `initialize`. xref:05-verification.adoc[Phase 5]
+
+| link:https://issues.redhat.com/browse/OSDOCS-21434[OSDOCS-21434]
+| OperatorGroup install mode, and the operator installed in `openshift-operators`. xref:01-prerequisites.adoc[Phase 1]
+
+| link:https://issues.redhat.com/browse/OSDOCS-21435[OSDOCS-21435]
+| `privateHost` default assumes a `<gateway>-istio` Service. Fixed upstream in link:https://github.com/Kuadrant/mcp-gateway/pull/1241[mcp-gateway#1241]. xref:03-mcp-gateway-extension.adoc#privatehost[Phase 3]
+
+| link:https://issues.redhat.com/browse/OSDOCS-21439[OSDOCS-21439]
+| Route exposure, and clusters without a load balancer. xref:02-gateway-setup.adoc[Phase 2]
+
+| link:https://issues.redhat.com/browse/CONNLINK-1936[CONNLINK-1936]
+| Controller reconcile loop on `spec.rules[].name`. Fixed upstream in link:https://github.com/Kuadrant/mcp-gateway/pull/1479[mcp-gateway#1479]. xref:03-mcp-gateway-extension.adoc#rules-changed[Phase 3]
+
+| link:https://issues.redhat.com/browse/RHAIRFE-3786[RHAIRFE-3786]
+| RFE: connect an externally hosted MCP server in one step, with a clear failure reason. xref:04-register-mcp-servers.adoc#external-servers[Phase 4]
+|===
+
+Upstream tracking for the documentation items: link:https://github.com/Kuadrant/mcp-gateway/issues/1622[mcp-gateway#1622] (bugs) and link:https://github.com/Kuadrant/mcp-gateway/issues/1623[mcp-gateway#1623] (gaps).
+
+NOTE: The two code fixes above are on upstream `main` for GA. On a Tech Preview build, set `privateHost` explicitly (xref:03-mcp-gateway-extension.adoc#privatehost[Phase 3]) and expect the `spec.rules[].name` log noise (xref:03-mcp-gateway-extension.adoc#rules-changed[Phase 3]).
