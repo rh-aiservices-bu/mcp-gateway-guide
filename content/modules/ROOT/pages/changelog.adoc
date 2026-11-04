@@ -6,7 +6,15 @@ Each entry links to its pull request for full details.
 
 == November 2026
 
+=== New Pages
+
+* *Guide Changelog* - This page. Every change to the guide since the project started in August 2026, grouped by month, with a link to the pull request behind each entry. (link:{repo-url}/pull/27[#27])
+
 === Features
+
+* *Interactive Flow Visualizers* - Two animated visualizers, linked from the architecture page and the overview. One covers the runtime path, built from the upstream design documents: registration and tool discovery, `tools/call` prefix routing, the OAuth discovery dance, identity-based tool filtering, token exchange, and progressive tool discovery. The other walks the nine install phases, including the three mistakes that cost the most time: the broker pod that is missing on purpose, the two listeners that must share a port, and why tool authorization needs two policies. Every box is clickable for the detail behind it. (link:{repo-url}/pull/26[#26])
+
+* *Running More Than One MCP Gateway* - New Phase 3 section. You can run several gateways in one cluster, one `Gateway` plus one `MCPGatewayExtension` for each. The part that is easy to miss is how a server gets attached to one instance and not the other. `MCPServerRegistration` has no field for a Gateway or for an extension, and its `targetRef` only accepts an `HTTPRoute`, so `parentRefs` on the route is the only thing that picks the instance. A registration pointing at a route attached to the other Gateway still reports `Ready`, its tools simply appear somewhere else. The section includes a loop that prints the full chain for every registration. It also explains why each instance wants its own namespace: the broker objects are always `deployment/mcp-gateway`, `service/mcp-gateway` and `secret/mcp-gateway-config`, whatever the extension is called. (link:{repo-url}/pull/25[#25])
 
 * *Same-Port Listener Requirement* - Both the public listener and the `*.mcp.local` listener on the same port is now stated as a requirement instead of a note, with the reason behind it. The EnvoyFilter the controller creates matches a single `portNumber`, and the router rewrites `:authority`, so Envoy has to route again inside the same listener. A split layout passes every check except `tools/call`, which is why it was the root cause of a field deployment failure. (link:{repo-url}/pull/12[#12], link:{repo-url}/issues/14[#14])
 
