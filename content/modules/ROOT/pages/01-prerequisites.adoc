@@ -160,8 +160,16 @@ This guide uses a dedicated `mcp-gateway` namespace. Installing the Subscription
 
 [source,bash]
 ----
-oc get csv -l operators.coreos.com/mcp-gateway.mcp-gateway="" -A \
-  -o jsonpath=\x27{range .items[*]}{.metadata.namespace}{"\\t"}{.spec.installModes}{"\\n"}{end}\x27
+oc get packagemanifest mcp-gateway -n openshift-marketplace \
+  -o jsonpath='{range .status.channels[0].currentCSVDesc.installModes[*]}{.type}={.supported}{"\n"}{end}'
+----
+
+[source]
+----
+OwnNamespace=true
+SingleNamespace=true
+MultiNamespace=false
+AllNamespaces=true
 ----
 
 Two things change, and both are easy to get wrong:
@@ -193,7 +201,7 @@ The label selector matters. A plain `oc get csv -n mcp-gateway` also lists every
 
 [source,bash]
 ----
-oc get csv -n mcp-gateway -o custom-columns=\x27NAME:.metadata.name,PHASE:.status.phase,REASON:.status.reason\x27
+oc get csv -n mcp-gateway -o custom-columns='NAME:.metadata.name,PHASE:.status.phase,REASON:.status.reason'
 ----
 
 [source]

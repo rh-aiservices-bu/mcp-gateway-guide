@@ -36,7 +36,7 @@ The reason is in the EnvoyFilter the controller generates in xref:03-mcp-gateway
 match:
   context: GATEWAY
   listener:
-    portNumber: 8080        # <-- the port of the sectionName listener, only
+    portNumber: 8080        # <-- a single port, for the whole filter
 patch:
   value:
     name: envoy.filters.http.ext_proc
@@ -47,7 +47,18 @@ patch:
 
 On `tools/call` the router rewrites the request's `:authority` to `<server>.mcp.local` - that is what `allow_all_routing: true` permits - and Envoy then re-routes the request *inside the same listener*. So the `*.mcp.local` routes have to be reachable on the port that carries the filter.
 
-Put the public listener on `443` and the `*.mcp.local` listener on `8080` and both halves break at once: the filter is never installed on `443`, and on `8080` there is no public route. Terminate TLS in front of the Gateway (the Route in Step 3) instead of giving the public listener its own port.
+Put the public listener on `443` and the `*.mcp.local` listener on `8080` and the rewrite has nowhere to land: the filter sits on one of those ports, the `*.mcp.local` HTTPRoutes are attached to the other, and Envoy cannot re-route a request into a listener that does not carry those routes. Terminate TLS in front of the Gateway (the Route in Step 3) instead of giving the public listener its own port.
+
+Check the two against each other at any time. Every listener port must equal the filter's `portNumber`:
+
+[source,bash]
+----
+oc get gateway mcp-gateway -n "$GATEWAY_NAMESPACE" \
+  -o jsonpath='{range .spec.listeners[*]}{.name}={.port}{"\n"}{end}'
+
+oc get envoyfilter -n "$GATEWAY_NAMESPACE" \
+  -o jsonpath='{.items[*].spec.configPatches[*].match.listener.portNumber}{"\n"}'
+----
 ====
 
 == Installation
@@ -109,7 +120,7 @@ Note the Service name. It is `<gateway-name>-<gatewayclass-name>`, and that stri
 ----
 export GW_SVC=$(oc get svc -n "$GATEWAY_NAMESPACE" \
   -l gateway.networking.k8s.io/gateway-name=mcp-gateway \
-  -o jsonpath=\x27{.items[0].metadata.name}\x27)
+  -o jsonpath='{.items[0].metadata.name}')
 echo "Gateway Service: $GW_SVC"
 ----
 
@@ -125,7 +136,7 @@ envsubst < manifests/02-gateway-setup/route.yaml.tmpl | oc apply -f -
 This creates an edge-TLS Route that bridges external traffic from the default HAProxy ingress controller to the gateway service on port 8080. The template resolves the backend Service as `+mcp-gateway-${GATEWAY_CLASS}+`, which is why `GATEWAY_CLASS` has to be exported in Step 1.
 
 WARNING: A Route whose `spec.to.name` points at a Service that does not exist is still `Admitted=True`. It answers `503` and nothing in `oc get route` hints at why. If you see `503` in the verification below, check the Service name first:
-`oc get route mcp-gateway -n "$GATEWAY_NAMESPACE" -o jsonpath=\x27{.spec.to.name}{"\\n"}\x27` against `$GW_SVC`.
+`oc get route mcp-gateway -n "$GATEWAY_NAMESPACE" -o jsonpath='{.spec.to.name}{"\n"}'` against `$GW_SVC`.
 
 === Step 4: Clusters Without a Load Balancer
 
@@ -158,17 +169,17 @@ data:
       type: ClusterIP
 EOF
 
-oc patch gateway mcp-gateway -n "$GATEWAY_NAMESPACE" --type=merge -p \x27{
+oc patch gateway mcp-gateway -n "$GATEWAY_NAMESPACE" --type=merge -p '{
   "spec": {"infrastructure": {"parametersRef": {
     "group": "", "kind": "ConfigMap", "name": "mcp-gateway-infra"}}}
-}\x27
+}'
 ----
 
 The ConfigMap holds a partial Service manifest under the `service` key, which the provider merges over the Service it generates. Confirm the change:
 
 [source,bash]
 ----
-oc get svc "$GW_SVC" -n "$GATEWAY_NAMESPACE" -o jsonpath=\x27{.spec.type}{"\\n"}\x27
+oc get svc "$GW_SVC" -n "$GATEWAY_NAMESPACE" -o jsonpath='{.spec.type}{"\n"}'
 ----
 
 NOTE: `infrastructure.parametersRef` is how OpenShift AI configures its own `data-science-gateway`, so on a cluster that already has one you can copy the pattern from `oc get cm data-science-gateway-config -n openshift-ingress -o yaml`. Support for the field depends on the provider - Istio-based classes honour it; verify before relying on it elsewhere.
@@ -263,7 +274,7 @@ Do not assume the `*.apps` certificate lives in a Secret called `default-ingress
 [source,bash]
 ----
 oc get ingresscontroller default -n openshift-ingress-operator \
-  -o jsonpath=\x27{.spec.defaultCertificate.name}{"\\n"}\x27
+  -o jsonpath='{.spec.defaultCertificate.name}{"\n"}'
 ----
 +
 An empty result means the operator-generated certificate is in use, and the CA to trust is the `default-ingress-cert` ConfigMap in `openshift-config-managed`. A non-empty result is the Secret name, in `openshift-ingress`, and it is whatever the cluster owner chose - on the cluster this guide was tested against it is `cert-manager-ingress-cert`. Either way, read it rather than hardcoding a name:
