@@ -16,6 +16,7 @@
 
 .Reference
 * xref:architecture.adoc[Architecture & Request Flow]
+* xref:rhcl-15.adoc[MCP Gateway GA on {rhcl} 1.5]
 
 .Guide Changelog
 * xref:changelog.adoc[Guide Changelog]

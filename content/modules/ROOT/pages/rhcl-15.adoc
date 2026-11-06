@@ -1,0 +1,193 @@
+= MCP Gateway GA on {rhcl} 1.5
+
+Field notes from running this guide on {rhcl} 1.5.0, where the {mcp-gw} is generally available, and from running it on the same cluster as Red Hat OpenShift AI 3.5.2 Models as a Service (MaaS). The rest of this guide is written against the Technology Preview in {rhcl} 1.4.
+
+IMPORTANT: At the time of writing (November 2026) the link:https://access.redhat.com/articles/7092611[{rhcl} supported configurations article^] only lists releases up to 1.4. Treat this page as a validation run, not a support statement.
+
+== Outcome
+
+Phases 1 to 5 work on {rhcl} 1.5.0 with two changes: install a different operator, and use `mcp.kuadrant.io/v1` in the manifests. Tested on {ocp-short} 4.21.36 (single node, no load balancer), Track B with the `openshift-default` GatewayClass:
+
+* `scripts/verify.sh`: 16 tools across the two in-cluster servers, `tools/call` through the hairpin works.
+* The new GA meta-tools `discover_tools` and `select_tools` show up in `tools/list` with no configuration.
+* An `AuthPolicy` on the `mcp` listener was enforced (403 without credentials, 200 with).
+* The same cluster then got OpenShift AI 3.5.2 MaaS, which passed its own 15/15 verification, and both gateways kept working.
+
+Phases 6 to 9 ({rhbk}, OAuth, tool authorization, virtual servers) were *not* run on 1.5.
+
+== What Is Different in 1.5
+
+[cols="1,2,2", options="header"]
+|===
+| | {rhcl} 1.4 (Tech Preview) | {rhcl} 1.5 (GA)
+
+| What you subscribe to
+| `mcp-gateway` package, channel `preview` (0.7.1). Pulls in `rhcl-operator` and the Authorino, Limitador and DNS operators as OLM dependencies
+| `rhcl-operator` package, channel `stable-1.5`. *One* CSV. The MCP Gateway is bundled, there is no separate subscription
+
+| How the components run
+| One CSV per operator
+| The RHCL operator deploys Authorino, Limitador, DNS, the developer portal controller and the MCP Gateway controller itself from bundled Helm charts, tracked by a cluster-scoped `KuadrantControlPlane` named `default`
+
+| Controller namespace
+| The Subscription's namespace (`mcp-gateway` in this guide)
+| The RHCL operator's namespace (`openshift-operators` if you follow the OpenShift AI MaaS guide)
+
+| CRD API
+| `mcp.kuadrant.io/v1alpha1`
+| `mcp.kuadrant.io/v1` only. `v1alpha1` is still in the CRD but `served: false`, so the manifests in this repo are rejected as they are
+
+| `privateHost` default on a non-istio GatewayClass
+| Wrong, must be set by hand (xref:03-mcp-gateway-extension.adoc#privatehost[Phase 3])
+| Correct. Derived from the real Service, for example `mcp-gateway-openshift-default.mcp-gateway.svc.cluster.local:8080`
+
+| `spec.rules[].name` rewrite loop
+| Present on clusters with Gateway API CRDs `v1.3.0` (xref:03-mcp-gateway-extension.adoc#rules-changed[Phase 3])
+| Gone. Same `v1.3.0` CRDs, zero `unknown field` lines and a stable HTTPRoute `resourceVersion`
+
+| `Kuadrant` CR
+| One per namespace that needs policies
+| Singleton. A second CR is silently ignored (see <<one-kuadrant>>)
+|===
+
+The `v1` spec fields used by this guide (`targetRef`, `sectionName`, `httpRouteManagement`, `prefix`, `privateHost`, `tools`) are unchanged, so only the `apiVersion` line differs. `oc get mcpsr` no longer prints a `TOOLS` column.
+
+== Running the Guide on 1.5
+
+=== Phase 1: Install RHCL 1.5 Instead of the mcp-gateway Operator
+
+Skip Step 4 (`manifests/01-prerequisites/operators/`). Subscribe to {rhcl} directly. Installing both is not supported, and the TP subscription in `mcp-gateway` is not removed by the 1.5 operator (see <<upgrading>>).
+
+[source,bash]
+----
+oc apply -f - <<'EOF'
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhcl-operator
+  namespace: openshift-operators
+spec:
+  channel: stable-1.5
+  installPlanApproval: Automatic
+  name: rhcl-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+EOF
+
+until oc get kuadrantcontrolplane default \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; do
+  sleep 10; echo -n "."
+done; echo " RHCL control plane ready"
+
+oc get kuadrantcontrolplane default \
+  -o jsonpath='{range .status.components[*]}{.name}{"\t"}{.chartVersion}{"\t"}{.ready}{"\n"}{end}'
+----
+
+[source]
+----
+dns-operator                  0.18.0   true
+mcp-gateway                   1.0.2    true
+authorino-operator            0.27.0   true
+limitador-operator            0.19.0   true
+developer-portal-controller   0.3.1    true
+----
+
+Still create the `mcp-gateway` namespace (Step 3), because the Gateway and the `MCPGatewayExtension` live there. Every `oc logs deployment/mcp-gateway-controller -n mcp-gateway` in this guide becomes `-n openshift-operators`.
+
+=== Phases 3, 4 and 9: Use mcp.kuadrant.io/v1
+
+Render the Kustomize directories and change the API version on the way in:
+
+[source,bash]
+----
+oc kustomize manifests/03-mcp-gateway-extension/ \
+  | sed 's#mcp.kuadrant.io/v1alpha1#mcp.kuadrant.io/v1#' | oc apply -f -
+
+oc kustomize manifests/04-register-mcp-servers/ \
+  | sed 's#mcp.kuadrant.io/v1alpha1#mcp.kuadrant.io/v1#' | oc apply -f -
+----
+
+The same applies to the `.yaml.tmpl` files rendered with `envsubst` in Phases 7 and 9.
+
+On Track B you can skip the `privateHost` patch from Phase 3. Check what the broker got:
+
+[source,bash]
+----
+oc get deploy mcp-gateway -n mcp-gateway \
+  -o jsonpath='{.spec.template.spec.containers[0].args}' | tr ',' '\n' | grep private-host
+----
+
+[source]
+----
+"--mcp-gateway-private-host=mcp-gateway-openshift-default.mcp-gateway.svc.cluster.local:8080"
+----
+
+== Running Next to OpenShift AI MaaS
+
+OpenShift AI MaaS also uses {rhcl}, and an install with both shares one operator. Three things came up.
+
+[#one-kuadrant]
+=== One Kuadrant Instance
+
+In 1.5 the operator reconciles only one `Kuadrant` CR. A second one in another namespace gets no status, no event and no Authorino. Phase 7 creates one in `mcp-gateway`, and MaaS creates one in `kuadrant-system`:
+
+* MaaS installed first: skip "Create the Kuadrant CR" in Phase 7. The MaaS instance enforces your `AuthPolicy` on the MCP gateway.
+* This guide installed first: delete the `mcp-gateway` Kuadrant before installing MaaS. Otherwise MaaS's instance is the one ignored, and MaaS has no Authorino.
+
+[source,bash]
+----
+oc get kuadrant -A
+----
+
+=== Authorino Talks TLS, Point the EnvoyFilter at It
+
+MaaS enables Authorino's TLS listener. Phase 7's `envoyfilter-auth-ssl.yaml` handles that, but it names the Authorino Service in `mcp-gateway`. With the MaaS instance, Authorino is in `kuadrant-system`:
+
+[source,bash]
+----
+sed 's/authorino-authorino-authorization.mcp-gateway.svc/authorino-authorino-authorization.kuadrant-system.svc/g' \
+  manifests/07-authentication/envoyfilter-auth-ssl.yaml | oc apply -f -
+----
+
+Without it, every MCP request returns `500` as soon as an `AuthPolicy` is attached, with or without valid credentials.
+
+=== Do Not Hold the Only LoadBalancer IP
+
+On clusters without a cloud load balancer, the MaaS installer creates a MetalLB pool with one address. The MCP gateway's `LoadBalancer` Service took it first on the test cluster, and the MaaS gateway stayed `AddressNotAssigned`. The MCP endpoint goes through the Route anyway, so apply xref:02-gateway-setup.adoc#_step_4_clusters_without_a_load_balancer[Phase 2 Step 4] and make the Service `ClusterIP`. It is optional on its own, but required next to MaaS on such clusters.
+
+== Kuadrant Operator Memory
+
+The CSV limits `kuadrant-operator-controller-manager` to 500Mi. On the test cluster it used 368Mi before any `Kuadrant` CR existed and peaked at 481Mi with the MaaS and MCP gateways and their policies. Field reports also mention restarts after adding subscriptions.
+
+Raise it through the Subscription. The Deployment is owned by the CSV, so patching it directly is reverted by OLM:
+
+[source,bash]
+----
+oc patch subscription rhcl-operator -n openshift-operators --type=merge -p '{
+  "spec": {"config": {"resources": {
+    "requests": {"cpu": "100m", "memory": "512Mi"},
+    "limits":   {"memory": "2Gi"}
+  }}}
+}'
+----
+
+The 1.5 CSV has only this one Deployment, so the MCP controller and Authorino are not affected.
+
+A reconcile loop on EnvoyFilters and the Wasm config, reported with the MCP Gateway on 1.5.0, did *not* reproduce here: with both gateways idle the operator logged 0 Wasm config builds and 0 EnvoyFilter events in 4 minutes, also after creating a second `Kuadrant` CR. If you see it, collect `oc logs` of the Kuadrant operator plus `oc get kuadrant,envoyfilter -A` and open a case.
+
+[#upgrading]
+== Upgrading from the 1.4 Tech Preview
+
+Not tested here. From the upstream code (`kuadrant-operator` v1.6.0, the base of {rhcl} 1.5.0):
+
+* At first start the 1.5 operator deletes the old Authorino, Limitador and DNS operator Subscriptions and CSVs, and takes those components over.
+* It looks for the old `mcp-gateway` Subscription only in the `mcp-system` namespace. This guide installs it in `mcp-gateway`, so remove it yourself first:
++
+[source,bash]
+----
+oc delete subscription mcp-gateway -n mcp-gateway
+oc delete csv -n mcp-gateway -l operators.coreos.com/mcp-gateway.mcp-gateway=
+----
+* Your `v1alpha1` objects need to be re-applied as `v1`.
+
+Try it on a non-production cluster first.

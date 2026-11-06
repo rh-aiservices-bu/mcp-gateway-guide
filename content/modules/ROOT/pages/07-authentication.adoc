@@ -94,6 +94,8 @@ NOTE: Do not check `jsonpath='{.items[0].spec}'` and expect a literal `{}`. OLM 
 
 A Kuadrant CR must exist in the namespace for AuthPolicy enforcement to work:
 
+NOTE: On {rhcl} 1.5 only one `Kuadrant` CR per cluster is reconciled. If OpenShift AI MaaS already created one in `kuadrant-system`, skip this step and point `envoyfilter-auth-ssl.yaml` at `kuadrant-system`. See xref:rhcl-15.adoc#one-kuadrant[Running next to OpenShift AI MaaS].
+
 [source,bash]
 ----
 oc apply -f manifests/07-authentication/kuadrant.yaml

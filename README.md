@@ -2,6 +2,8 @@
 
 Step-by-step guide for installing and configuring MCP Gateway (Red Hat Connectivity Link 1.4) on OpenShift, with real examples of authentication and authorization using Red Hat Build of Keycloak (RHBK).
 
+> **RHCL 1.5:** MCP Gateway is GA in RHCL 1.5. Phases 1-5 were validated on RHCL 1.5.0, also next to OpenShift AI 3.5.2 MaaS. See [MCP Gateway GA on RHCL 1.5](https://rh-aiservices-bu.github.io/mcp-gateway-guide/modules/main/rhcl-15.html).
+
 ## What's Inside
 
 - **Part 1 - Installation & Configuration**: Gateway API provider selection, OLM-based operator install, Gateway setup, MCPGatewayExtension, registration of in-cluster **and external** MCP servers, and end-to-end verification
