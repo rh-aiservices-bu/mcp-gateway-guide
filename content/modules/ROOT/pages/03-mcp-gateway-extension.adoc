@@ -148,6 +148,8 @@ dial tcp: lookup mcp-gateway-istio.mcp-gateway.svc.cluster.local on 172.231.0.10
 If you only ever run `initialize`, this install looks finished. Always run a real `tools/call` - see xref:05-verification.adoc[Phase 5].
 ====
 
+NOTE: On {rhcl} 1.5 (GA) the default is derived from the real Service and this patch is not needed. See xref:rhcl-15.adoc[MCP Gateway GA on {rhcl} 1.5].
+
 Find the real Service and set the field:
 
 [source,bash]

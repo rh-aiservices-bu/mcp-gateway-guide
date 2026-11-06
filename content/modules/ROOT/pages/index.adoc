@@ -11,6 +11,8 @@ Requires OpenShift 4.19+ with cluster-admin access.
 
 WARNING: {mcp-gw} is a Technology Preview feature in {rhcl} 1.4. Technology Preview features are not supported with Red Hat production service level agreements (SLAs) and might not be functionally complete.
 
+NOTE: {mcp-gw} is generally available in {rhcl} 1.5. Phases 1-5 were validated on {rhcl} 1.5.0, also on the same cluster as OpenShift AI 3.5.2 MaaS. It needs a different subscription and `mcp.kuadrant.io/v1` manifests, see xref:rhcl-15.adoc[MCP Gateway GA on {rhcl} 1.5].
+
 IMPORTANT: This guide is not a replacement for the link:https://docs.redhat.com/en/documentation/red_hat_connectivity_link/1.4/html/install_the_mcp_gateway/mcp-gateway-install[official {rhcl} {mcp-gw} documentation]. It is a companion resource with opinionated Kustomize manifests and automation scripts to accelerate deployment.
 
 == What is MCP Gateway?
@@ -194,4 +196,4 @@ Findings from field deployments and E2E testing on fresh OCP 4.21 clusters. Each
 
 Upstream tracking for the documentation items: link:https://github.com/Kuadrant/mcp-gateway/issues/1622[mcp-gateway#1622] (bugs) and link:https://github.com/Kuadrant/mcp-gateway/issues/1623[mcp-gateway#1623] (gaps).
 
-NOTE: The two code fixes above are on upstream `main` for GA. On a Tech Preview build, set `privateHost` explicitly (xref:03-mcp-gateway-extension.adoc#privatehost[Phase 3]) and expect the `spec.rules[].name` log noise (xref:03-mcp-gateway-extension.adoc#rules-changed[Phase 3]).
+NOTE: The two code fixes above are on upstream `main` for GA, and both were confirmed fixed on {rhcl} 1.5.0 (xref:rhcl-15.adoc[MCP Gateway GA on {rhcl} 1.5]). On a Tech Preview build, set `privateHost` explicitly (xref:03-mcp-gateway-extension.adoc#privatehost[Phase 3]) and expect the `spec.rules[].name` log noise (xref:03-mcp-gateway-extension.adoc#rules-changed[Phase 3]).

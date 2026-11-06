@@ -147,6 +147,8 @@ oc apply -f manifests/01-prerequisites/operators/namespace.yaml
 
 === Step 4: Install the MCP Gateway Operator
 
+NOTE: On {rhcl} 1.5 the {mcp-gw} is bundled in the `rhcl-operator` and there is no `mcp-gateway` subscription. Skip this step and follow xref:rhcl-15.adoc#_phase_1_install_rhcl_1_5_instead_of_the_mcp_gateway_operator[the 1.5 install] instead.
+
 [source,bash]
 ----
 oc apply -k manifests/01-prerequisites/operators/
