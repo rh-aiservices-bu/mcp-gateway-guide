@@ -2,7 +2,7 @@
 
 Field notes from running this guide on {rhcl} 1.5.0, where the {mcp-gw} is generally available, and from running it on the same cluster as Red Hat OpenShift AI 3.5.2 Models as a Service (MaaS). The rest of this guide is written against the Technology Preview in {rhcl} 1.4.
 
-IMPORTANT: At the time of writing (November 2026) the link:https://access.redhat.com/articles/7092611[{rhcl} supported configurations article^] only lists releases up to 1.4. Treat this page as a validation run, not a support statement.
+IMPORTANT: At the time of writing (November 2026) the link:https://access.redhat.com/articles/7092611[{rhcl} supported configurations article^] only lists releases up to 1.4. Treat this page as a validation run, not a support statement. For OpenShift AI, MCP Gateway GA documentation is tracked for 3.6 in link:https://redhat.atlassian.net/browse/RHOAIENG-98735[RHOAIENG-98735^], and a support statement for RHCL 1.5 with 3.5.x is requested in link:https://redhat.atlassian.net/browse/RHOAIENG-103137[RHOAIENG-103137^].
 
 == Outcome
 
@@ -124,12 +124,12 @@ oc get deploy mcp-gateway -n mcp-gateway \
 
 == Running Next to OpenShift AI MaaS
 
-OpenShift AI MaaS also uses {rhcl}, and an install with both shares one operator. Three things came up.
+OpenShift AI MaaS also uses {rhcl}, and an install with both shares one operator. Three things came up. MaaS itself also needs a fix for the Authorino serving cert on 1.5, tracked in link:https://redhat.atlassian.net/browse/RHOAIENG-103136[RHOAIENG-103136^] and link:https://redhat.atlassian.net/browse/CONNLINK-1976[CONNLINK-1976^].
 
 [#one-kuadrant]
 === One Kuadrant Instance
 
-In 1.5 the operator reconciles only one `Kuadrant` CR. A second one in another namespace gets no status, no event and no Authorino. Phase 7 creates one in `mcp-gateway`, and MaaS creates one in `kuadrant-system`:
+Tracked as link:https://redhat.atlassian.net/browse/CONNLINK-1713[CONNLINK-1713^]. In 1.5 the operator reconciles only one `Kuadrant` CR. A second one in another namespace gets no status, no event and no Authorino. Phase 7 creates one in `mcp-gateway`, and MaaS creates one in `kuadrant-system`:
 
 * MaaS installed first: skip "Create the Kuadrant CR" in Phase 7. The MaaS instance enforces your `AuthPolicy` on the MCP gateway.
 * This guide installed first: delete the `mcp-gateway` Kuadrant before installing MaaS. Otherwise MaaS's instance is the one ignored, and MaaS has no Authorino.
@@ -157,7 +157,7 @@ On clusters without a cloud load balancer, the MaaS installer creates a MetalLB 
 
 == Kuadrant Operator Memory
 
-The CSV limits `kuadrant-operator-controller-manager` to 500Mi. On the test cluster it used 368Mi before any `Kuadrant` CR existed and peaked at 481Mi with the MaaS and MCP gateways and their policies. Field reports also mention restarts after adding subscriptions.
+The CSV limits `kuadrant-operator-controller-manager` to 500Mi. On the test cluster it used 368Mi before any `Kuadrant` CR existed and peaked at 481Mi with the MaaS and MCP gateways and their policies. Field reports also mention restarts after adding subscriptions. Tracked as link:https://redhat.atlassian.net/browse/CONNLINK-1878[CONNLINK-1878^].
 
 Raise it through the Subscription. The Deployment is owned by the CSV, so patching it directly is reverted by OLM:
 
@@ -178,7 +178,7 @@ A reconcile loop on EnvoyFilters and the Wasm config, reported with the MCP Gate
 [#upgrading]
 == Upgrading from the 1.4 Tech Preview
 
-Not tested here. From the upstream code (`kuadrant-operator` v1.6.0, the base of {rhcl} 1.5.0):
+Upgrade guidance is requested in link:https://redhat.atlassian.net/browse/CONNLINK-1973[CONNLINK-1973^]. Not tested here. From the upstream code (`kuadrant-operator` v1.6.0, the base of {rhcl} 1.5.0):
 
 * At first start the 1.5 operator deletes the old Authorino, Limitador and DNS operator Subscriptions and CSVs, and takes those components over.
 * It looks for the old `mcp-gateway` Subscription only in the `mcp-system` namespace. This guide installs it in `mcp-gateway`, so remove it yourself first:
