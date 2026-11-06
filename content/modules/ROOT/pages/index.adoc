@@ -192,6 +192,18 @@ Findings from field deployments and E2E testing on fresh OCP 4.21 clusters. Each
 
 | link:https://issues.redhat.com/browse/RHAIRFE-3786[RHAIRFE-3786]
 | RFE: connect an externally hosted MCP server in one step, with a clear failure reason. xref:04-register-mcp-servers.adoc#external-servers[Phase 4]
+
+| link:https://redhat.atlassian.net/browse/CONNLINK-1973[CONNLINK-1973^]
+| Upgrade from the 1.4 Tech Preview to {rhcl} 1.5. xref:rhcl-15.adoc#upgrading[RHCL 1.5]
+
+| link:https://redhat.atlassian.net/browse/CONNLINK-1713[CONNLINK-1713^]
+| Only one `Kuadrant` CR is reconciled, a second one is ignored without a message. Matters next to OpenShift AI MaaS. xref:rhcl-15.adoc#one-kuadrant[RHCL 1.5]
+
+| link:https://redhat.atlassian.net/browse/CONNLINK-1878[CONNLINK-1878^]
+| Kuadrant operator memory close to its limit. xref:rhcl-15.adoc#_kuadrant_operator_memory[RHCL 1.5]
+
+| link:https://redhat.atlassian.net/browse/CONNLINK-1976[CONNLINK-1976^]
+| Authorino operator recreates the authorization Service and drops the serving-cert annotation. Breaks OpenShift AI MaaS on 1.5 (link:https://redhat.atlassian.net/browse/RHOAIENG-103136[RHOAIENG-103136^]). xref:rhcl-15.adoc[RHCL 1.5]
 |===
 
 Upstream tracking for the documentation items: link:https://github.com/Kuadrant/mcp-gateway/issues/1622[mcp-gateway#1622] (bugs) and link:https://github.com/Kuadrant/mcp-gateway/issues/1623[mcp-gateway#1623] (gaps).
